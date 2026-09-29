@@ -1,14 +1,15 @@
 <script setup lang="ts">
 import type { HTMLAttributes } from 'vue'
-import { computed, onBeforeUnmount, ref, useSlots, watch } from 'vue'
+import { useElementSize } from '@vueuse/core'
+import { computed, onBeforeUnmount, ref, useId, useSlots, watch } from 'vue'
 import { cn } from '@/lib/utils'
 
-type DataTooltipPlacement = 'top' | 'bottom' | 'left' | 'right'
+type DataTooltipPlacement = 'top' | 'bottom' | 'left' | 'right' | 'cursor'
 
 interface Props {
   /** 提示文本，留空且无 #content 插槽时不渲染气泡 */
   content?: string
-  /** 气泡相对触发元素的方位 */
+  /** 气泡方位；cursor 跟随指针并保持在视口内 */
   placement?: DataTooltipPlacement
   /** 气泡宽度，number 视为 px；默认由内容撑起 */
   width?: number | string
@@ -29,6 +30,10 @@ const props = withDefaults(defineProps<Props>(), {
 const slots = useSlots()
 
 const rootRef = ref<HTMLElement | null>(null)
+const tooltipRef = ref<HTMLElement | null>(null)
+const tooltipId = useId()
+const cursor = ref({ x: 0, y: 0 })
+const { width: tooltipWidth, height: tooltipHeight } = useElementSize(tooltipRef, undefined, { box: 'border-box' })
 const isOpen = ref(false)
 const isHoverOpen = ref(false)
 let lastTouchOpenAt = 0
@@ -41,6 +46,25 @@ const placementClass: Record<DataTooltipPlacement, string> = {
   bottom: 'top-full left-1/2 mt-2 -translate-x-1/2',
   left: 'top-1/2 right-full mr-2 -translate-y-1/2',
   right: 'top-1/2 left-full ml-2 -translate-y-1/2',
+  cursor: '',
+}
+
+const cursorStyle = computed(() => {
+  if (props.placement !== 'cursor' || typeof window === 'undefined')
+    return {}
+  return {
+    left: `${Math.max(8, Math.min(cursor.value.x + 12, window.innerWidth - tooltipWidth.value - 8))}px`,
+    top: `${Math.max(8, Math.min(cursor.value.y + 16, window.innerHeight - tooltipHeight.value - 8))}px`,
+  }
+})
+
+function updateCursor(event: PointerEvent | FocusEvent) {
+  if (props.placement !== 'cursor')
+    return
+  const rect = rootRef.value?.getBoundingClientRect()
+  cursor.value = 'clientX' in event
+    ? { x: event.clientX, y: event.clientY }
+    : { x: rect?.right ?? 0, y: rect?.bottom ?? 0 }
 }
 
 const sizeStyle = computed(() => {
@@ -70,7 +94,9 @@ function removeDocumentListeners() {
     return
 
   document.removeEventListener('pointerdown', handleDocumentPointerDown, true)
-  document.removeEventListener('keydown', handleDocumentKeydown)
+  document.removeEventListener('keydown', handleDocumentKeydown, true)
+  document.removeEventListener('scroll', handleDocumentScroll, true)
+  window.removeEventListener('resize', closeTooltip)
 }
 
 function handleDocumentPointerDown(event: PointerEvent) {
@@ -86,10 +112,17 @@ function handleDocumentKeydown(event: KeyboardEvent) {
     closeTooltip()
 }
 
+function handleDocumentScroll() {
+  const target = document.elementFromPoint(cursor.value.x, cursor.value.y)
+  if (!target || !rootRef.value?.contains(target))
+    closeTooltip()
+}
+
 function handlePointerDown(event: PointerEvent) {
   if (!hasTooltip.value || !isTouchLikePointer(event))
     return
 
+  updateCursor(event)
   lastTouchOpenAt = Date.now()
   shouldStopNextClick = true
   isOpen.value = !isOpen.value
@@ -102,7 +135,10 @@ function handleClick(event: MouseEvent) {
   shouldStopNextClick = false
 }
 
-function openHoverTooltip() {
+function openHoverTooltip(event: PointerEvent | FocusEvent) {
+  if ('pointerType' in event && isTouchLikePointer(event))
+    return
+  updateCursor(event)
   if (hasTooltip.value)
     isHoverOpen.value = true
 }
@@ -111,13 +147,17 @@ function closeHoverTooltip() {
   isHoverOpen.value = false
 }
 
-watch(isOpen, (open) => {
+watch(() => isOpen.value || isHoverOpen.value, (open) => {
   if (typeof document === 'undefined')
     return
 
   if (open) {
     document.addEventListener('pointerdown', handleDocumentPointerDown, true)
-    document.addEventListener('keydown', handleDocumentKeydown)
+    document.addEventListener('keydown', handleDocumentKeydown, true)
+    if (props.placement === 'cursor') {
+      document.addEventListener('scroll', handleDocumentScroll, true)
+      window.addEventListener('resize', closeTooltip)
+    }
     return
   }
 
@@ -138,27 +178,34 @@ onBeforeUnmount(removeDocumentListeners)
     ref="rootRef"
     data-slot="data-tooltip"
     :data-state="isOpen ? 'open' : 'closed'"
+    :aria-describedby="hasTooltip && (isOpen || isHoverOpen) ? tooltipId : undefined"
     :class="cn('group/data-tooltip relative inline-block', props.class)"
     @pointerdown.capture="handlePointerDown"
     @pointerenter="openHoverTooltip"
+    @pointermove="updateCursor"
     @pointerleave="closeHoverTooltip"
     @focusin="openHoverTooltip"
     @focusout="closeHoverTooltip"
     @click="handleClick"
   >
     <slot />
-    <span
-      v-if="hasTooltip && (isOpen || isHoverOpen)"
-      role="tooltip"
-      :class="cn(
-        'pointer-events-none absolute z-20 hidden rounded bg-foreground/80 p-1 text-[10px] leading-none text-background shadow-lg group-hover/data-tooltip:block group-focus-within/data-tooltip:block whitespace-normal break-words',
-        isOpen && 'block',
-        placementClass[placement],
-        props.contentClass,
-      )"
-      :style="sizeStyle"
-    >
-      <slot name="content">{{ content }}</slot>
-    </span>
+    <Teleport to="body" :disabled="placement !== 'cursor'">
+      <span
+        v-if="hasTooltip && (isOpen || isHoverOpen)"
+        :id="tooltipId"
+        ref="tooltipRef"
+        role="tooltip"
+        :class="cn(
+          'pointer-events-none rounded bg-foreground/80 p-1 text-[10px] leading-none text-background shadow-lg',
+          placement === 'cursor'
+            ? 'fixed z-50 w-max whitespace-nowrap'
+            : ['absolute z-20 hidden group-hover/data-tooltip:block group-focus-within/data-tooltip:block whitespace-normal break-words', isOpen && 'block', placementClass[placement]],
+          props.contentClass,
+        )"
+        :style="[sizeStyle, cursorStyle]"
+      >
+        <slot name="content">{{ content }}</slot>
+      </span>
+    </Teleport>
   </component>
 </template>

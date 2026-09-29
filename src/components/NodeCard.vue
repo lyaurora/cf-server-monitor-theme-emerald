@@ -2,17 +2,17 @@
 import type { NodeData } from '@/stores/nodes'
 import { Icon } from '@iconify/vue'
 import { computed } from 'vue'
+import NodePingRow from '@/components/NodePingRow.vue'
 import { Badge } from '@/components/ui/badge'
 import { CardX } from '@/components/ui/card-x'
 import { DataTooltip } from '@/components/ui/data-tooltip'
 import { ProgressThin } from '@/components/ui/progress-thin'
 import { useBackgroundSurface } from '@/composables/useBackgroundSurface'
-import { buildTopPingNetworks, useNodePingDisplay } from '@/composables/useNodePingDisplay'
 import { useAppStore } from '@/stores/app'
 import { useNodesStore } from '@/stores/nodes'
-import { getApiAssetUrl } from '@/utils/api'
+import { getApiAssetUrl, resolvePingLines } from '@/utils/api'
 import { formatBytesPerSecondWithConfig, formatBytesWithConfig, formatDateTime, formatUptimeWithFormat, getStatus } from '@/utils/helper'
-import { formatOfflineTime, getCustomTags, getPriceTags, getRemainingTimeTagClass, getTrafficLevel, getTrafficUsed, getTrafficUsedPercentage, hasRegion, showTrafficProgress } from '@/utils/nodeHelper'
+import { formatOfflineTime, getCustomTags, getPriceTags, getRemainingTimeTagClass, getTrafficLevel, getTrafficUsed, getTrafficUsedPercentage, hasConfiguredPrice, hasRegion, showTrafficProgress } from '@/utils/nodeHelper'
 import { getOSImage, getOSName } from '@/utils/osImageHelper'
 import { getRegionCode, getRegionDisplayName } from '@/utils/regionHelper'
 
@@ -46,15 +46,9 @@ const priceTags = computed(() => getPriceTags(props.node, appStore.lang))
 const remainingTimeTagClass = computed(() => getRemainingTimeTagClass(props.node))
 const customTags = computed(() => getCustomTags(props.node))
 
-const {
-  latencyRenderBars,
-  lossRenderBars,
-  latencyDisplay,
-  lossDisplay,
-  latencyPanelTooltip,
-  lossPanelTooltip,
-} = useNodePingDisplay(props.node.uuid)
-const topPingNetworks = computed(() => buildTopPingNetworks(props.node.ping))
+const pingLines = computed(() => resolvePingLines(Object.keys(props.node.ping ?? {}), appStore.publicSettings?.themeSettings.pingLinesByNode[props.node.uuid]))
+const expiryTag = computed(() => priceTags.value.at(-1))
+const planText = computed(() => hasConfiguredPrice(props.node) ? priceTags.value[0]?.text : '--')
 
 function openPingDialog() {
   emit('pingClick', props.node)
@@ -191,19 +185,38 @@ function openPingDialog() {
             <div>{{ offlineTime }}</div>
           </div>
           <div class="flex flex-col gap-y-2" :class="[!props.node.online && 'blur-xs opacity-60 pointer-events-none']">
-            <div class="flex items-center">
-              <span class="truncate">
-                速率
-              </span>
-              <div class="border-t-2 border-dotted border-gray-500/10 mx-2 flex-1" />
-              <div class="truncate flex flex-row gap-1">
-                <div class="text-green-600 flex flex-row items-center gap-1">
-                  <Icon icon="tabler:chevron-up" width="12" height="12" />
-                  {{ formatBytesPerSecond(props.node.net_out ?? 0) }}
+            <!-- Glassmorphism 的三列双行结构，沿用 Emerald 的格式化与配色。 -->
+            <div class="grid grid-cols-3 gap-2">
+              <div class="flex min-w-0 flex-col gap-1">
+                <div class="flex items-center gap-1 text-green-600">
+                  <Icon icon="tabler:chevron-up" width="12" height="12" class="shrink-0" />
+                  <span class="truncate">{{ formatBytesPerSecond(props.node.net_out ?? 0) }}</span>
                 </div>
-                <div class="text-blue-600 flex flex-row items-center gap-1">
-                  <Icon icon="tabler:chevron-down" width="12" height="12" />
-                  {{ formatBytesPerSecond(props.node.net_in ?? 0) }}
+                <div class="flex items-center gap-1 text-blue-600">
+                  <Icon icon="tabler:chevron-down" width="12" height="12" class="shrink-0" />
+                  <span class="truncate">{{ formatBytesPerSecond(props.node.net_in ?? 0) }}</span>
+                </div>
+              </div>
+              <div class="flex min-w-0 flex-col gap-1">
+                <div class="flex items-center gap-1">
+                  <Icon icon="tabler:upload" width="12" height="12" class="shrink-0" />
+                  <span class="truncate">{{ formatBytes(props.node.net_total_up ?? 0) }}</span>
+                </div>
+                <div class="flex items-center gap-1">
+                  <Icon icon="tabler:download" width="12" height="12" class="shrink-0" />
+                  <span class="truncate">{{ formatBytes(props.node.net_total_down ?? 0) }}</span>
+                </div>
+              </div>
+              <div class="flex min-w-0 flex-col gap-1">
+                <DataTooltip placement="top" :content="expiredDate" class="min-w-0" content-class="whitespace-nowrap">
+                  <div class="flex items-center gap-0.5">
+                    <Icon icon="tabler:calendar-stats" width="12" height="12" class="shrink-0" />
+                    <span class="truncate" :class="remainingTimeTagClass">{{ props.node.expired_at ? expiryTag?.text.replace('+', '剩余 ') : '--' }}</span>
+                  </div>
+                </DataTooltip>
+                <div class="flex items-center gap-0.5">
+                  <Icon icon="tabler:coins" width="12" height="12" class="shrink-0" />
+                  <span class="truncate">{{ planText }}</span>
                 </div>
               </div>
             </div>
@@ -216,112 +229,14 @@ function openPingDialog() {
                 {{ props.node.uptime > 0 ? formatUptime(props.node.uptime) : '' }}
               </span>
             </div>
-            <div class="flex items-center justify-between">
-              <span class="truncate">
-                费用
-              </span>
-              <div class="border-t-2 border-dotted border-gray-500/10 mx-2 flex-1" />
-              <DataTooltip placement="left" :content="expiredDate" content-class="whitespace-nowrap right-0 mr-0">
-                <span class="truncate flex flex-row gap-1">
-                  <template v-for="(tag, index) in priceTags" :key="tag">
-                    <span class="inline-flex flex-row gap-1 items-center">
-                      <template v-if="tag.highlightValue">
-                        <span>{{ tag.prefix }}</span>
-                        <span :class="remainingTimeTagClass">{{ tag.highlightValue }}</span>
-                        <span>{{ tag.suffix }}</span>
-                      </template>
-                      <template v-else>
-                        {{ tag.text }}
-                      </template>
-                    </span>
-                    <span v-if="index < priceTags.length - 1" :key="`${tag}-${index}`">·</span>
-                  </template>
-                </span>
-              </DataTooltip>
+            <div v-if="nodesStore.showThreeNetDetails" class="flex flex-col gap-2">
+              <NodePingRow
+                v-for="(line, index) in pingLines" :key="`${index}-${line}`"
+                :node="props.node" :line-key="line" :index="index" :lines="pingLines"
+                @ping-click="openPingDialog"
+              />
+              <span v-if="!pingLines.length">N/A</span>
             </div>
-            <div class="flex items-center justify-between">
-              <span class="truncate">
-                三网
-              </span>
-              <div class="border-t-2 border-dotted border-gray-500/10 mx-2 flex-1" />
-              <div v-if="topPingNetworks.length > 0" class="flex flex-row">
-                <DataTooltip
-                  v-for="(net, index) in topPingNetworks" :key="net.key" placement="top"
-                  :content="net.tooltip"
-                  content-class="whitespace-pre-wrap w-max px-1.5 !leading-[1.2] text-[11px]"
-                >
-                  <div class="truncate">
-                    <span v-if="index" class="mx-1">·</span>
-                    <span :class="net.toneClass">{{ net.latency }}</span>
-                  </div>
-                </DataTooltip>
-              </div>
-              <div v-else class="truncate">
-                N/A
-              </div>
-            </div>
-            <template v-if="nodesStore.showThreeNetDetails">
-              <div class="grid grid-cols-6 gap-x-3">
-                <div
-                  role="button" tabindex="0"
-                  class="group/panel relative col-span-3 flex h-6 cursor-pointer flex-col gap-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  :title="latencyPanelTooltip" :aria-label="`${props.node.name} 延迟`"
-                  @click.stop="openPingDialog"
-                  @keydown.enter.stop.prevent="openPingDialog"
-                  @keydown.space.stop.prevent="openPingDialog"
-                >
-                  <div class="flex items-center justify-between text-[11px] leading-none relative">
-                    <span class="text-muted-foreground">延迟</span>
-                    <div class="border-t-2 border-dotted border-gray-500/10 mx-2 flex-1" />
-                    <span class="font-medium text-foreground/85">{{ latencyDisplay }}</span>
-                  </div>
-                  <div
-                    class="grid h-full items-end gap-[1px]"
-                    :style="{ gridTemplateColumns: `repeat(${latencyRenderBars.length}, minmax(0, 1fr))` }"
-                  >
-                    <DataTooltip
-                      v-for="bar in latencyRenderBars" :key="bar.key" placement="top"
-                      :content="bar.tooltip" class="h-full w-full"
-                      content-class="whitespace-pre-wrap w-max px-1.5 !leading-[1.2] text-[11px]"
-                    >
-                      <span
-                        class="block h-full w-full rounded-[1px] transition-transform duration-150 group-hover/data-tooltip:scale-y-200"
-                        :class="bar.className"
-                      />
-                    </DataTooltip>
-                  </div>
-                </div>
-                <div
-                  role="button" tabindex="0"
-                  class="group/panel relative col-span-3 flex h-6 cursor-pointer flex-col gap-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  :title="lossPanelTooltip" :aria-label="`${props.node.name} 丢包`"
-                  @click.stop="openPingDialog"
-                  @keydown.enter.stop.prevent="openPingDialog"
-                  @keydown.space.stop.prevent="openPingDialog"
-                >
-                  <div class="flex items-center justify-between text-[11px] leading-none relative">
-                    <span class="text-muted-foreground">丢包</span>
-                    <div class="border-t-2 border-dotted border-gray-500/10 mx-2 flex-1" />
-                    <span class="font-medium text-foreground/85">{{ lossDisplay }}</span>
-                  </div>
-                  <div
-                    class="grid h-full items-end gap-[1px]"
-                    :style="{ gridTemplateColumns: `repeat(${lossRenderBars.length}, minmax(0, 1fr))` }"
-                  >
-                    <DataTooltip
-                      v-for="bar in lossRenderBars" :key="bar.key" placement="top"
-                      :content="bar.tooltip" class="h-full w-full"
-                      content-class="whitespace-pre-wrap w-max px-1.5 !leading-[1.2] text-[11px]"
-                    >
-                      <span
-                        class="block h-full w-full rounded-[1px] transition-transform duration-150 group-hover/data-tooltip:scale-y-200"
-                        :class="bar.className"
-                      />
-                    </DataTooltip>
-                  </div>
-                </div>
-              </div>
-            </template>
           </div>
         </div>
         <div v-if="customTags.length > 0" class="flex shrink-0 flex-wrap gap-1 items-center">

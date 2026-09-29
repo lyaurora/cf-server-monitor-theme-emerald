@@ -2,14 +2,6 @@ import type { NodeData } from '@/stores/nodes'
 import { formatDateTime } from '@/utils/helper'
 import { formatPriceWithCycle, formatRemainingDays, getExpireStatus, getExpireTextClass, parseTags } from '@/utils/tagHelper'
 
-/** Ping 运营商配置 */
-export const PING_PROVIDERS = [
-  { key: 'ct', label: 'CT' },
-  { key: 'cu', label: 'CU' },
-  { key: 'cm', label: 'CM' },
-  { key: 'bd', label: 'BD' },
-] as const
-
 export interface PriceTagItem {
   text: string
   highlightValue?: string

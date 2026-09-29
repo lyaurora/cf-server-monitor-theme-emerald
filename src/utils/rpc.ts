@@ -50,11 +50,17 @@ export interface NodeStatusPing {
   max: number
 }
 
-/** 一小时延迟窗口中的单个 2 分钟桶（已按 ct/cu/cm/bd 聚合） */
+export interface PingLinePoint {
+  latency: number | null
+  loss: number | null
+}
+
+/** 保留各线路数据，同时兼容列表视图的综合统计。 */
 export interface PingWindowPoint {
   time: string
   latency: number | null
   loss: number | null
+  lines?: Record<string, PingLinePoint>
 }
 
 export interface NodeStatus {

@@ -169,6 +169,8 @@ export function normalizeCurrency(currency: string | null | undefined): Currency
     || 'CNY'
 }
 
+const CURRENCY_CODE_REGEX = /^[A-Z]{3}$/i
+
 /**
  * Symbol used when rendering a node's configured price.
  * Prefer the API wire value (e.g. `¥JPY`) so yen is not confused with CNY `¥`.
@@ -179,7 +181,7 @@ export function getCurrencyDisplaySymbol(currency: string | null | undefined): s
     return '¥'
 
   // Non-ISO wire symbols from CF Server Monitor — show as returned.
-  if (!/^[A-Za-z]{3}$/.test(raw))
+  if (!CURRENCY_CODE_REGEX.test(raw))
     return raw
 
   return CURRENCY_SYMBOLS[normalizeCurrency(raw)] ?? raw

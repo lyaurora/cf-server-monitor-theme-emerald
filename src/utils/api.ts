@@ -134,6 +134,10 @@ export interface LatencyWindowPoint {
   cu?: number | string | boolean | null
   cm?: number | string | boolean | null
   bd?: number | string | boolean | null
+  node_1?: number | string | boolean | null
+  node_2?: number | string | boolean | null
+  node_3?: number | string | boolean | null
+  node_4?: number | string | boolean | null
 }
 
 export interface CfServer {
@@ -232,6 +236,7 @@ export type EarthViewMode = 'earth' | 'earth-stop' | 'maps' | 'cards' | 'hide'
 export type BackgroundType = 'image' | 'video'
 
 export interface ThemeSettings {
+  pingLinesByNode: Record<string, string[]>
   defaultThemeMode: ThemeMode
   defaultViewMode: NodeViewMode
   alertEnabled: boolean
@@ -364,6 +369,7 @@ function enabled(value: unknown): boolean {
 }
 
 const DEFAULT_THEME_SETTINGS: ThemeSettings = {
+  pingLinesByNode: {},
   defaultViewMode: 'card',
   defaultThemeMode: 'auto',
   alertEnabled: false,
@@ -413,6 +419,32 @@ function themeOptionValues(value: unknown): Record<string, unknown> {
   return values
 }
 
+export function normalizePingLinesByNode(value: unknown): Record<string, string[]> {
+  if (!isRecord(value))
+    return {}
+  return Object.fromEntries(Object.entries(value).flatMap(([uuid, lines]) => {
+    if (!Array.isArray(lines))
+      return []
+    const valid = [...new Set(lines.filter((key): key is string => typeof key === 'string' && Object.hasOwn(DEFAULT_PING_TASK_NAMES, key)))].slice(0, 3)
+    return valid.length ? [[uuid, valid]] : []
+  }))
+}
+
+export function resolvePingLines(available: string[], saved: string[] = []): string[] {
+  return [...new Set([...saved.filter(key => available.includes(key)), ...available])].slice(0, 3)
+}
+
+export function switchPingLine(lines: string[], index: number, key: string): string[] {
+  const next = [...lines]
+  if (index < 0 || index >= lines.length)
+    return next
+  const other = next.indexOf(key)
+  if (other >= 0)
+    next[other] = next[index]!
+  next[index] = key
+  return next
+}
+
 function themeBoolean(value: unknown, fallback: boolean): boolean {
   if (typeof value === 'boolean')
     return value
@@ -442,6 +474,7 @@ function themeEnum<T extends string>(value: unknown, fallback: T, values: readon
 export function adaptThemeOptions(value: unknown): ThemeSettings {
   const options = themeOptionValues(value)
   return {
+    pingLinesByNode: normalizePingLinesByNode(options.pingLinesByNode),
     defaultViewMode: themeEnum(options.defaultViewMode, DEFAULT_THEME_SETTINGS.defaultViewMode, ['card', 'list']),
     defaultThemeMode: themeEnum(options.defaultThemeMode, DEFAULT_THEME_SETTINGS.defaultThemeMode, ['auto', 'light', 'dark']),
     alertEnabled: themeBoolean(options.alertEnabled, DEFAULT_THEME_SETTINGS.alertEnabled),
@@ -759,6 +792,33 @@ export function getCachedSiteConfigs(): SiteConfig[] {
   return cachedSiteConfigs
 }
 
+// Keep acknowledged edits while other Worker instances can still return cached configuration.
+const savedPingLineEdits = new Map<string, { time: number, lines: string[] }>()
+
+export async function saveNodePingLines(uuid: string, lines: string[]): Promise<Record<string, string[]>> {
+  if (lines.length > 3 || lines.some(key => !Object.hasOwn(DEFAULT_PING_TASK_NAMES, key)) || new Set(lines).size !== lines.length)
+    throw new Error('无效的探针线路')
+  const config = await request<SiteConfig>('/api/config')
+  if (!config.authorization)
+    throw new Error('请先登录站长账号')
+  const existing = isRecord(config.theme_options) ? config.theme_options : {}
+  const recentEdits = Object.fromEntries([...savedPingLineEdits]
+    .filter(([, edit]) => Date.now() - edit.time < 150_000)
+    .map(([key, edit]) => [key, edit.lines]))
+  const pingLinesByNode = { ...adaptThemeOptions(existing).pingLinesByNode, ...recentEdits, [uuid]: lines }
+  const themeOptions = { ...existing, pingLinesByNode }
+  const result = await request<{ success: boolean, message?: string }>('/api/theme_options', 0, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ theme_options: themeOptions }),
+  })
+  if (!result?.success)
+    throw new Error(result?.message || '线路配置保存失败')
+  savedPingLineEdits.set(uuid, { time: Date.now(), lines })
+  cachedSiteConfigs[0] = { ...config, theme_options: themeOptions }
+  return normalizePingLinesByNode(pingLinesByNode)
+}
+
 export interface AdaptedServerBilling {
   price: number
   priceConfigured: boolean
@@ -965,8 +1025,8 @@ function trafficLimitType(value: unknown): string {
 }
 
 function pingEntry(name: string, latency: unknown, loss: unknown): NodeStatusPing {
-  const latest = finiteNumber(latency)
-  const lossValue = finiteNumber(loss)
+  const latest = pingWindowNumber(latency) ?? Number.NaN
+  const lossValue = pingWindowNumber(loss) ?? Number.NaN
   return { name, latest, avg: latest, tail: latest, loss: lossValue, min: latest, max: latest }
 }
 
@@ -1003,12 +1063,12 @@ function pingFieldPresent(server: CfServer, field: keyof CfServer): boolean {
   return isPingFieldPresent(server[field])
 }
 
-const PING_WINDOW_PROVIDER_KEYS = ['ct', 'cu', 'cm', 'bd'] as const
-
 function pingWindowNumber(value: unknown): number | null {
-  if (value === false || value === null || value === undefined || value === '')
+  if (typeof value !== 'number' && typeof value !== 'string')
     return null
-  const number = Number.parseFloat(String(value))
+  if (String(value).trim() === '')
+    return null
+  const number = Number(value)
   return Number.isFinite(number) ? number : null
 }
 
@@ -1016,19 +1076,21 @@ function buildPingWindowPoint(
   ts: number,
   pingPoint: LatencyWindowPoint | undefined,
   lossPoint: LatencyWindowPoint | undefined,
-): PingWindowPoint | null {
-  const latencyValues = PING_WINDOW_PROVIDER_KEYS
-    .map(key => pingWindowNumber(pingPoint?.[key]))
-    .filter((value): value is number => value !== null && value > 0)
-  const lossValues = PING_WINDOW_PROVIDER_KEYS
-    .map(key => pingWindowNumber(lossPoint?.[key]))
-    .filter((value): value is number => value !== null && value >= 0)
-
-  if (!latencyValues.length && !lossValues.length)
-    return null
+): PingWindowPoint {
+  const lines = Object.fromEntries(PING_TASKS.map(({ key }) => {
+    const latency = pingWindowNumber(pingPoint?.[key])
+    const loss = pingWindowNumber(lossPoint?.[key])
+    return [key, {
+      latency: latency !== null && latency >= 0 && loss !== 100 ? latency : null,
+      loss: loss !== null && loss >= 0 && loss <= 100 ? loss : latency !== null && latency < 0 ? 100 : null,
+    }]
+  }))
+  const latencyValues = Object.values(lines).flatMap(point => point.latency === null ? [] : [point.latency])
+  const lossValues = Object.values(lines).flatMap(point => point.loss === null ? [] : [point.loss])
 
   return {
     time: new Date(ts).toISOString(),
+    lines,
     latency: latencyValues.length
       ? latencyValues.reduce((sum, value) => sum + value, 0) / latencyValues.length
       : null,
@@ -1045,34 +1107,14 @@ function buildPingWindow(server: CfServer): PingWindowPoint[] | undefined {
   if (!ping?.length && !loss?.length)
     return undefined
 
-  const lossByTs = new Map<number, LatencyWindowPoint>()
-  for (const point of loss ?? []) {
-    const ts = timestamp(point.ts, 0)
-    if (ts > 0)
-      lossByTs.set(ts, point)
-  }
-
-  const points: PingWindowPoint[] = []
-  for (const point of ping ?? []) {
-    const ts = timestamp(point.ts, 0)
-    if (ts <= 0)
-      continue
-    const point2 = buildPingWindowPoint(ts, point, lossByTs.get(ts))
-    if (point2)
-      points.push(point2)
-  }
-
-  // 延迟窗口为空但丢包有数据时，以丢包的 ts 生成点
-  if (!points.length) {
-    for (const point of loss ?? []) {
-      const ts = timestamp(point.ts, 0)
-      if (ts <= 0)
-        continue
-      const point2 = buildPingWindowPoint(ts, undefined, point)
-      if (point2)
-        points.push(point2)
-    }
-  }
+  const byTime = (items: LatencyWindowPoint[]) => new Map(items
+    .map(point => [timestamp(point.ts, 0), point] as const)
+    .filter(([ts]) => ts > 0 && Number.isFinite(ts)))
+  const pingByTs = byTime(ping ?? [])
+  const lossByTs = byTime(loss ?? [])
+  const points = [...new Set([...pingByTs.keys(), ...lossByTs.keys()])]
+    .sort((a, b) => a - b)
+    .map(ts => buildPingWindowPoint(ts, pingByTs.get(ts), lossByTs.get(ts)))
 
   return points.length ? points : undefined
 }
@@ -1089,9 +1131,11 @@ export function adaptServer(server: CfServer, apiIndex: number): AdaptedServer {
   const now = Date.now()
   const bootTime = timestamp(server.boot_time, 0)
   const online = server.is_online ?? (updatedAt > 0 && now - updatedAt < ONLINE_THRESHOLD_MS)
+  const pingWindow = buildPingWindow(server)
   const ping: Record<string, NodeStatusPing> = {}
   for (const task of PING_TASKS) {
-    if (pingFieldPresent(server, task.latencyField) || pingFieldPresent(server, task.lossField)) {
+    if (pingFieldPresent(server, task.latencyField) || pingFieldPresent(server, task.lossField)
+      || pingWindow?.some(point => point.lines?.[task.key]?.latency != null || point.lines?.[task.key]?.loss != null)) {
       ping[task.key] = pingEntry(
         pingTaskNames[task.key],
         server[task.latencyField],
@@ -1099,8 +1143,6 @@ export function adaptServer(server: CfServer, apiIndex: number): AdaptedServer {
       )
     }
   }
-
-  const pingWindow = buildPingWindow(server)
 
   return {
     client: {

@@ -3,6 +3,7 @@ import type { ByteDecimalsConfig } from '@/utils/helper'
 import { usePreferredDark, useStorageAsync } from '@vueuse/core'
 import { defineStore } from 'pinia'
 import { computed, ref, watch } from 'vue'
+import { resolvePingLines, saveNodePingLines, switchPingLine } from '@/utils/api'
 
 export type { ThemeMode }
 type Lang = 'zh-CN' | 'en-US'
@@ -29,6 +30,8 @@ const useAppStore = defineStore('app', () => {
   const publicSettings = ref<PublicSettings>()
   const nodeSelectedGroup = useStorageAsync<string>('nodeSelectedGroup', 'all', localStorage)
   const isLoggedIn = ref<boolean>(false)
+  const savingPingLines = ref(new Set<string>())
+  let pendingPingSave = Promise.resolve()
   const connectionError = ref<boolean>(false)
 
   // 首页滚动位置记忆
@@ -243,6 +246,26 @@ const useAppStore = defineStore('app', () => {
     isLoggedIn.value = loggedIn
   }
 
+  async function updateNodePingLines(uuid: string, index: number, key: string, available: string[]) {
+    const slot = `${uuid}:${index}`
+    if (savingPingLines.value.has(slot) || !publicSettings.value)
+      throw new Error('正在加载或保存线路，请稍后重试')
+    savingPingLines.value.add(slot)
+    // Merge each queued edit into the latest selection without blocking other rows.
+    const save = pendingPingSave.then(async () => {
+      const current = resolvePingLines(available, publicSettings.value!.themeSettings.pingLinesByNode[uuid])
+      const saved = await saveNodePingLines(uuid, switchPingLine(current, index, key))
+      publicSettings.value!.themeSettings.pingLinesByNode = saved
+    })
+    pendingPingSave = save.catch(() => {})
+    try {
+      await save
+    }
+    finally {
+      savingPingLines.value.delete(slot)
+    }
+  }
+
   return {
     loading,
     themeMode,
@@ -278,6 +301,8 @@ const useAppStore = defineStore('app', () => {
     backgroundBlur,
     backgroundOverlay,
     isLoggedIn,
+    savingPingLines,
+    updateNodePingLines,
     publicSettings,
     connectionError,
     homeScrollPosition,

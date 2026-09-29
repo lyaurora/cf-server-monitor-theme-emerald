@@ -1,9 +1,8 @@
 import type { MaybeRefOrGetter } from 'vue'
-import type { NodeStatusPing } from '@/utils/rpc'
 import { computed, toValue } from 'vue'
-import { NODE_PING_BAR_COUNT, useNodePingStats } from '@/composables/useNodePingStats'
+import { NODE_PING_BAR_COUNT, pingAverage, useNodePingStats } from '@/composables/useNodePingStats'
+import { PING_HISTORY_WINDOW_MS, useNodesStore } from '@/stores/nodes'
 import { formatDateTime } from '@/utils/helper'
-import { getPingToneClass, PING_PROVIDERS } from '@/utils/nodeHelper'
 
 export type NodePingMetric = 'latency' | 'loss'
 
@@ -14,6 +13,7 @@ export interface NodePingBar {
 }
 
 interface UseNodePingDisplayOptions {
+  line?: MaybeRefOrGetter<string>
   enabled?: MaybeRefOrGetter<boolean>
   loadingDisplayText?: string
   emptyDisplayText?: string
@@ -45,66 +45,32 @@ function getLossToneClass(loss: number): string {
   return 'bg-rose-500/80'
 }
 
-export interface TopPingNetwork {
-  key: string
-  name: string
-  latency: string
-  toneClass: string
-  tooltip: string
-}
-
-/**
- * 首页卡片/列表「三网」行：只取 CT/CU/CM（前 3 个），并按存在性过滤；
- * ping_x / loss_x 皆不存在时不会进入 ping map，对应项不展示。
- */
-export function buildTopPingNetworks(ping?: Record<string, NodeStatusPing>): TopPingNetwork[] {
-  if (!ping)
-    return []
-
-  return PING_PROVIDERS.slice(0, 3).flatMap((provider) => {
-    const entry = ping[provider.key]
-    if (!entry)
-      return []
-
-    const latency = entry.latest ?? 0
-    const loss = entry.loss ?? 100
-    const available = latency > 0 && loss < 100
-
-    return [{
-      key: provider.key,
-      name: entry.name ?? provider.label,
-      latency: available ? `${Math.round(latency)}ms` : '--',
-      toneClass: getPingToneClass(latency, available),
-      tooltip: available
-        ? `${entry.name ?? provider.label}\n${Math.round(latency)} ms`
-        : `${entry.name ?? provider.label}\n暂无响应`,
-    }]
-  })
-}
-
 export function useNodePingDisplay(
   uuid: MaybeRefOrGetter<string>,
   options: UseNodePingDisplayOptions = {},
 ) {
   // Home-card samples are appended by the shared subscribe=all WebSocket.
   const pingStatsEnabled = computed(() => options.enabled === undefined || toValue(options.enabled))
+  const nodesStore = useNodesStore()
 
   const pingStats = useNodePingStats(uuid, {
     enabled: pingStatsEnabled,
+    line: options.line,
   })
 
   /**
-   * 将一小时数据集按时间平均划分为 NODE_PING_BAR_COUNT 根柱子，
-   * 每根柱取段内数据点的平均值（无论段内几条数据）。
+   * 将最近两小时数据按时间划分为 NODE_PING_BAR_COUNT 根柱子，
+   * 每根柱按段内采样覆盖时长加权。
    */
   function buildPingBars(metric: NodePingMetric): NodePingBar[] {
     const points = pingStats.history.value
     if (!points.length)
       return []
 
-    const barCount = Math.min(NODE_PING_BAR_COUNT, points.length)
-    const firstTime = Date.parse(points[0]!.time)
-    const lastTime = Date.parse(points.at(-1)!.time)
+    const perLine = !!toValue(options.line)
+    const barCount = perLine ? NODE_PING_BAR_COUNT : Math.min(NODE_PING_BAR_COUNT, points.length)
+    const lastTime = perLine ? Math.max(nodesStore.pingNow.getTime(), Date.parse(points.at(-1)!.time)) : Date.parse(points.at(-1)!.time)
+    const firstTime = perLine ? lastTime - PING_HISTORY_WINDOW_MS : Date.parse(points[0]!.time)
     const segmentSize = Math.max(1, (lastTime - firstTime) / barCount)
 
     const bars: NodePingBar[] = []
@@ -116,34 +82,18 @@ export function useNodePingDisplay(
         return time >= segmentStart && time < segmentEnd
       })
 
-      const latencyValues = segmentPoints
-        .map(point => point.latency)
-        .filter((value): value is number => value !== null)
-      const lossValues = segmentPoints
-        .map(point => point.loss)
-        .filter((value): value is number => value !== null)
-
-      const value = metric === 'latency'
-        ? latencyValues.length
-          ? latencyValues.reduce((sum, v) => sum + v, 0) / latencyValues.length
-          : null
-        : lossValues.length
-          ? lossValues.reduce((sum, v) => sum + v, 0) / lossValues.length
-          : null
+      const value = pingAverage(segmentPoints, metric, segmentEnd, nodesStore.pingSampleIntervalMs)
       const segmentTime = new Date(segmentStart).toISOString()
+      const timeRange = `${formatDateTime(segmentTime, 'HH:mm')} - ${formatDateTime(new Date(segmentEnd).toISOString(), 'HH:mm')}`
 
       bars.push({
-        key: `${segmentTime}-${index}`,
+        key: `${metric}-${index}`,
         className: value === null
           ? 'bg-muted-foreground/15'
           : metric === 'latency'
             ? getLatencyToneClass(value)
             : getLossToneClass(value),
-        tooltip: value === null
-          ? `${formatDateTime(segmentTime, 'HH:mm:ss')} N/A`
-          : metric === 'latency'
-            ? `${formatDateTime(segmentTime, 'HH:mm:ss')}\n${Math.round(value)} ms`
-            : `${formatDateTime(segmentTime, 'HH:mm:ss')}\n${value.toFixed(1)}%`,
+        tooltip: `${timeRange} · ${value === null ? 'N/A' : metric === 'latency' ? `${Math.round(value)} ms` : `${Number(value.toFixed(1))}%`}`,
       })
     }
 
@@ -173,7 +123,17 @@ export function useNodePingDisplay(
   const latencyRenderBars = computed(() => latencyBars.value.length ? latencyBars.value : buildEmptyPingBars('latency'))
   const lossRenderBars = computed(() => lossBars.value.length ? lossBars.value : buildEmptyPingBars('loss'))
 
+  const latestLatency = computed(() => {
+    const line = toValue(options.line)
+    const latest = line ? nodesStore.nodesByUuid.get(toValue(uuid))?.ping?.[line] : undefined
+    return latest && Number.isFinite(latest.latest) && latest.latest >= 0 && latest.loss !== 100
+      ? latest.latest
+      : pingStats.history.value.filter(point => point.latency !== null).at(-1)?.latency ?? null
+  })
+
   const latencyDisplay = computed(() => {
+    if (toValue(options.line))
+      return latestLatency.value !== null ? `${Math.round(latestLatency.value)} ms` : '--'
     if (pingStats.hasData.value)
       return `${Math.round(pingStats.avgLatency.value)} ms`
     if (pingStats.loading.value)
@@ -182,6 +142,8 @@ export function useNodePingDisplay(
   })
 
   const lossDisplay = computed(() => {
+    if (toValue(options.line) && !pingStats.history.value.some(point => point.loss !== null))
+      return '--'
     if (pingStats.hasData.value)
       return `${pingStats.avgLoss.value.toFixed(1)}%`
     if (pingStats.loading.value)
@@ -190,6 +152,8 @@ export function useNodePingDisplay(
   })
 
   const latencyPanelTooltip = computed(() => {
+    if (toValue(options.line))
+      return '最新延迟'
     if (!pingStats.hasData.value) {
       if (pingStats.loading.value)
         return options.loadingPanelTooltipText?.latency ?? ''
@@ -199,6 +163,8 @@ export function useNodePingDisplay(
   })
 
   const lossPanelTooltip = computed(() => {
+    if (toValue(options.line))
+      return '平均丢包'
     if (!pingStats.hasData.value) {
       if (pingStats.loading.value)
         return options.loadingPanelTooltipText?.loss ?? ''
@@ -216,6 +182,7 @@ export function useNodePingDisplay(
     pingStatsEnabled,
     latencyRenderBars,
     lossRenderBars,
+    latestLatency,
     latencyDisplay,
     lossDisplay,
     latencyPanelTooltip,

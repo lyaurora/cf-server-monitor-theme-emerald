@@ -172,6 +172,10 @@ class InitManager {
       last_updated: sample.ts,
     }, apiIndex).status
 
+    this.nodesStore.recordPingSample(uuid, status)
+    if (current && sample.ts < Date.parse(current.time))
+      return
+
     if (current) {
       if (!sampleHasField(sample.data, 'net_tx', 'net_total_up'))
         status.net_total_up = current.net_total_up
@@ -206,27 +210,7 @@ class InitManager {
         status.gpu = current.gpu
       if (!sampleHasField(sample.data, 'temp'))
         status.temp = current.temp
-      if (!sampleHasField(
-        sample.data,
-        'ping_ct',
-        'ping_cu',
-        'ping_cm',
-        'ping_bd',
-        'ping_node_1',
-        'ping_node_2',
-        'ping_node_3',
-        'ping_node_4',
-        'loss_ct',
-        'loss_cu',
-        'loss_cm',
-        'loss_bd',
-        'loss_node_1',
-        'loss_node_2',
-        'loss_node_3',
-        'loss_node_4',
-      )) {
-        status.ping = current.ping
-      }
+      status.ping = { ...current.ping, ...status.ping }
     }
 
     this.queueNodeStatuses({ [uuid]: status })
@@ -243,7 +227,7 @@ class InitManager {
       return
     const statuses = Object.fromEntries(this.pendingStatuses)
     this.pendingStatuses.clear()
-    this.nodesStore.updateNodeStatuses(statuses)
+    this.nodesStore.updateNodeStatuses(statuses, false)
   }
 
   private enqueueLiveSamples(apiIndex: number, serverId: string, samples: LiveSample[]): void {

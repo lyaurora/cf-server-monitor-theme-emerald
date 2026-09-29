@@ -159,6 +159,8 @@
 
 ## 开发
 
+本地卡片调整：中部采用 Glassmorphism 的三列双行结构；下方三条线路各自显示最新延迟、最近两小时的加权平均丢包及历史条。登录后点击线路名称可换线，结果合并保存至站点 `theme_options.pingLinesByNode`，需要后端支持 `POST /api/theme_options`。列表沿用相同选线，只显示三个最新延迟，悬浮显示线路名。后端历史不足两小时时缺失部分留空，不额外轮询节点历史。
+
 ```bash
 bun install
 cp .env.example .env

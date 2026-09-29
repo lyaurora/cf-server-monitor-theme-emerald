@@ -1,4 +1,5 @@
-import type { Client, NodeStatus, NodeStatusPing } from '@/utils/rpc'
+import type { Client, NodeStatus, NodeStatusPing, PingWindowPoint } from '@/utils/rpc'
+import { useNow } from '@vueuse/core'
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { parseNodeGroups } from '@/utils/groupHelper'
@@ -6,11 +7,9 @@ import { parseNodeGroups } from '@/utils/groupHelper'
 /** 流量限制类型 */
 export type TrafficLimitType = 'up' | 'down' | 'min' | 'max' | 'sum'
 
-export interface PingHistoryPoint {
-  time: string
-  latency: number | null
-  loss: number | null
-}
+export interface PingHistoryPoint extends PingWindowPoint {}
+
+export const PING_HISTORY_WINDOW_MS = 2 * 3_600_000
 
 /** 节点完整信息（合并 Client 和 Status） */
 export interface NodeData {
@@ -118,10 +117,10 @@ interface PingHistoryConfig {
 }
 
 const PING_HISTORY_DEFAULTS: PingHistoryConfig = {
-  // 旧后端无 latency_window / show_three_net_details：30 桶 × 2 分钟 = 1 小时
+  // 缺省按两小时、两分钟粒度显示；旧后端缺失的历史保持为空。
   showThreeNetDetails: true,
-  points: 30,
-  hours: 1,
+  points: 60,
+  hours: 2,
 }
 
 const useNodesStore = defineStore('nodes', () => {
@@ -129,6 +128,7 @@ const useNodesStore = defineStore('nodes', () => {
   const nodes = ref<NodeData[]>([])
   const earthNodes = ref<NodeData[]>([])
   const pingHistoryByUuid = ref<Record<string, PingHistoryPoint[]>>({})
+  const pingNow = useNow({ interval: 60_000 })
   const wsConnectionState = ref<WsConnectionState>('disconnected')
   const wsReconnectAttempts = ref<number>(0)
   const pingHistoryConfig = ref<PingHistoryConfig>({ ...PING_HISTORY_DEFAULTS })
@@ -161,6 +161,7 @@ const useNodesStore = defineStore('nodes', () => {
 
   /** 后端 show_three_net_details：false 时卡片/列表隐藏三网延迟丢包信息 */
   const showThreeNetDetails = computed(() => pingHistoryConfig.value.showThreeNetDetails)
+  const pingSampleIntervalMs = computed(() => pingHistoryBucketMs())
 
   // ===== 方法 =====
 
@@ -305,68 +306,45 @@ const useNodesStore = defineStore('nodes', () => {
   function configurePingHistory(config: Partial<PingHistoryConfig>): void {
     const points = Number.isFinite(config.points) && (config.points ?? 0) > 0
       ? Math.round(config.points!)
-      : PING_HISTORY_DEFAULTS.points
+      : pingHistoryConfig.value.points
     const hours = Number.isFinite(config.hours) && (config.hours ?? 0) > 0
       ? config.hours!
-      : PING_HISTORY_DEFAULTS.hours
+      : pingHistoryConfig.value.hours
     pingHistoryConfig.value = {
-      showThreeNetDetails: config.showThreeNetDetails ?? PING_HISTORY_DEFAULTS.showThreeNetDetails,
+      showThreeNetDetails: config.showThreeNetDetails ?? pingHistoryConfig.value.showThreeNetDetails,
       points,
       hours,
     }
   }
 
-  /**
-   * 记录一次 ping 采样。按配置的窗口桶长对齐 status.time 后按桶 upsert：
-   * 已存在同桶点时合并（新样本有效值覆盖，无效保留旧值），否则按时间顺序插入新桶并截断到配置的桶数。
-   */
+  /** 保留真实采样时间，避免把一分钟实测与数分钟窗口桶等权混算。 */
   function recordPingSample(uuid: string, status: NodeStatus): void {
     const sampleTime = Date.parse(status.time)
-    if (!Number.isFinite(sampleTime))
+    if (!Number.isFinite(sampleTime) || sampleTime < Date.now() - PING_HISTORY_WINDOW_MS)
       return
-
-    const pingEntries = Object.values(status.ping ?? {})
-    const latencyValues = pingEntries
-      .map(entry => entry.latest)
-      .filter(value => Number.isFinite(value) && value > 0)
-    const lossValues = pingEntries
-      .map(entry => entry.loss)
-      .filter(value => Number.isFinite(value) && value >= 0)
-
-    if (!latencyValues.length && !lossValues.length)
+    const entries = Object.entries(status.ping ?? {}).filter(([, entry]) => Number.isFinite(entry.latest) || Number.isFinite(entry.loss))
+    if (!entries.length)
       return
-
-    const bucketTs = Math.floor(sampleTime / pingHistoryBucketMs()) * pingHistoryBucketMs()
-    const latency = latencyValues.length
-      ? latencyValues.reduce((sum, value) => sum + value, 0) / latencyValues.length
-      : null
-    const loss = lossValues.length
-      ? lossValues.reduce((sum, value) => sum + value, 0) / lossValues.length
-      : null
-    const bucketTime = new Date(bucketTs).toISOString()
-
     const history = pingHistoryByUuid.value[uuid] ?? []
-    const point = history.find(item => item.time === bucketTime)
-    if (point) {
-      const nextLatency = latency ?? point.latency
-      const nextLoss = loss ?? point.loss
-      if (nextLatency === point.latency && nextLoss === point.loss)
-        return
-      pingHistoryByUuid.value = {
-        ...pingHistoryByUuid.value,
-        [uuid]: history.map(item => item === point
-          ? { time: point.time, latency: nextLatency, loss: nextLoss }
-          : item),
-      }
-      return
+    const lines = { ...history.find(item => item.time === status.time)?.lines }
+    for (const [key, entry] of entries) {
+      const previous = lines[key]
+      const latency = Number.isFinite(entry.latest)
+        ? entry.latest >= 0 ? entry.latest : null
+        : previous?.latency ?? null
+      const loss = Number.isFinite(entry.loss)
+        ? entry.loss >= 0 && entry.loss <= 100 ? entry.loss : null
+        : entry.latest < 0 ? 100 : previous?.loss ?? null
+      lines[key] = { latency: loss === 100 ? null : latency, loss }
     }
-
-    pingHistoryByUuid.value = {
-      ...pingHistoryByUuid.value,
-      [uuid]: [...history, { time: bucketTime, latency, loss }]
-        .sort((a, b) => Date.parse(a.time) - Date.parse(b.time))
-        .slice(-pingHistoryConfig.value.points),
+    const average = (metric: 'latency' | 'loss') => {
+      const values = Object.values(lines).flatMap(line => line[metric] === null ? [] : [line[metric]])
+      return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null
     }
+    const point = { time: status.time, latency: average('latency'), loss: average('loss'), lines }
+    // ponytail: bounded two-hour array; use a ring buffer if very large fleets make insertion costly.
+    pingHistoryByUuid.value[uuid] = [...history.filter(item => item.time !== point.time && Date.parse(item.time) >= Date.now() - PING_HISTORY_WINDOW_MS), point]
+      .sort((a, b) => Date.parse(a.time) - Date.parse(b.time))
   }
 
   /**
@@ -419,12 +397,10 @@ const useNodesStore = defineStore('nodes', () => {
         if (pingHistoryConfig.value.showThreeNetDetails && status.pingWindow?.length) {
           pingHistoryByUuid.value = {
             ...pingHistoryByUuid.value,
-            [uuid]: status.pingWindow.slice(-pingHistoryConfig.value.points),
+            [uuid]: status.pingWindow.filter(point => Date.parse(point.time) >= Date.now() - PING_HISTORY_WINDOW_MS),
           }
         }
-        else {
-          recordPingSample(uuid, status)
-        }
+        recordPingSample(uuid, status)
       }
     })
 
@@ -559,6 +535,8 @@ const useNodesStore = defineStore('nodes', () => {
     nodes,
     earthNodes,
     pingHistoryByUuid,
+    pingNow,
+    pingSampleIntervalMs,
     wsConnectionState,
     wsReconnectAttempts,
     // 计算属性
