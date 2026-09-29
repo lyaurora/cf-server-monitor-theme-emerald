@@ -33,7 +33,7 @@ export interface NodeData {
   remark?: string
   public_remark: string
   mem_total: number
-  swap_total: number
+  swap_total: number | null
   disk_total: number
   version?: string
   weight: number
@@ -56,7 +56,7 @@ export interface NodeData {
   cpu: number
   gpu: number
   ram: number
-  swap: number
+  swap: number | null
   load: number
   load5: number
   load15: number
@@ -80,12 +80,13 @@ export type WsConnectionState = 'disconnected' | 'connecting' | 'connected' | 'r
 
 /** 状态数据（用于更新） */
 interface StatusData {
+  swap_total: number | null
   online: boolean
   time: string
   cpu: number
   gpu: number
   ram: number
-  swap: number
+  swap: number | null
   load: number
   load5: number
   load15: number
@@ -212,7 +213,7 @@ const useNodesStore = defineStore('nodes', () => {
       cpu: 0,
       gpu: 0,
       ram: 0,
-      swap: 0,
+      swap: null,
       load: 0,
       load5: 0,
       load15: 0,
@@ -244,6 +245,7 @@ const useNodesStore = defineStore('nodes', () => {
       gpu: status.gpu,
       ram: status.ram,
       swap: status.swap,
+      swap_total: status.swap_total,
       load: status.load,
       load5: status.load5,
       load15: status.load15,
@@ -274,6 +276,7 @@ const useNodesStore = defineStore('nodes', () => {
       gpu: status.gpu,
       ram: status.ram,
       swap: status.swap,
+      swap_total: status.swap_total,
       load: status.load,
       load5: status.load5,
       load15: status.load15,
@@ -474,6 +477,7 @@ const useNodesStore = defineStore('nodes', () => {
           gpu: currentNode.gpu,
           ram: currentNode.ram,
           swap: currentNode.swap,
+          swap_total: client.swap_total ?? currentNode.swap_total,
           load: currentNode.load,
           load5: currentNode.load5,
           load15: currentNode.load15,

@@ -292,6 +292,7 @@ const latestStatus = computed(() => {
     return null
   return data.at(-1) ?? null
 })
+const swapTotal = computed(() => latestStatus.value?.swap_total ?? nodeInfo.value?.swap_total)
 
 // ==================== 工具函数 ====================
 
@@ -464,9 +465,9 @@ const memoryChartOption = computed(() => ({
       const ramUsed = record.ram ?? 0
       const ramTotal = record.ram_total ?? nodeInfo.value?.mem_total ?? 0
       const swapUsed = record.swap ?? 0
-      const swapTotal = record.swap_total ?? nodeInfo.value?.swap_total ?? 0
+      const swapTotal = record.swap_total ?? nodeInfo.value?.swap_total
       const ramPercent = ramTotal > 0 ? ((ramUsed / ramTotal) * 100).toFixed(1) : '0'
-      const swapPercent = swapTotal > 0 ? ((swapUsed / swapTotal) * 100).toFixed(1) : '0'
+      const swapPercent = swapTotal == null ? '' : ` (${swapTotal > 0 ? ((swapUsed / swapTotal) * 100).toFixed(1) : '0'}%)`
 
       const timeStr = formatTimeForTooltip(record.time, selectedHours.value || 1)
       let html = `<div style="font-weight:600;margin-bottom:6px;color:${chartThemeColors.value.textSecondary}">${timeStr}</div>`
@@ -477,8 +478,8 @@ const memoryChartOption = computed(() => ({
         if (item.seriesName === 'RAM') {
           html += `<div style="display:flex;align-items:center">${colorDot}<span>RAM</span><span style="margin-left:auto;font-weight:600;margin-left:16px">${formatBytes(ramUsed)} (${ramPercent}%)</span></div>`
         }
-        else if (item.seriesName === 'Swap') {
-          html += `<div style="display:flex;align-items:center">${colorDot}<span>Swap</span><span style="margin-left:auto;font-weight:600;margin-left:16px">${formatBytes(swapUsed)} (${swapPercent}%)</span></div>`
+        else if (item.seriesName === 'Swap' && record.swap !== null) {
+          html += `<div style="display:flex;align-items:center">${colorDot}<span>Swap</span><span style="margin-left:auto;font-weight:600;margin-left:16px">${formatBytes(swapUsed)}${swapPercent}</span></div>`
         }
       }
       html += '</div>'
@@ -521,7 +522,7 @@ const memoryChartOption = computed(() => ({
     {
       name: 'Swap',
       type: 'line',
-      data: chartData.value.map(r => r.swap ?? 0),
+      data: chartData.value.map(r => r.swap),
 
       showSymbol: false,
       lineStyle: { width: 1.5, color: chartColors.secondary, cap: 'round' as const },
@@ -890,6 +891,22 @@ onMounted(() => {
                   <span>{{
                     formatBytesSplit(nodeInfo.mem_total).value }}</span>
                   <span>{{ formatBytesSplit(nodeInfo.mem_total).unit }}</span>
+                </template>
+                <span v-else>-</span>
+              </div>
+            </div>
+            <div class="mt-1 flex items-center justify-between text-xs">
+              <span class="text-muted-foreground">Swap</span>
+              <div class="flex gap-1 items-baseline">
+                <template v-if="latestStatus?.swap != null">
+                  <span>{{ formatBytesSplit(latestStatus.swap).value }}</span>
+                  <span>{{ formatBytesSplit(latestStatus.swap).unit }}</span>
+                </template>
+                <span v-else>-</span>
+                <span>·</span>
+                <template v-if="swapTotal != null">
+                  <span>{{ formatBytesSplit(swapTotal).value }}</span>
+                  <span>{{ formatBytesSplit(swapTotal).unit }}</span>
                 </template>
                 <span v-else>-</span>
               </div>

@@ -111,11 +111,6 @@ function handleVideoError() {
 }
 
 watch([showBackground, currentUrl, backgroundType], ([enabled, url, type]) => {
-  if (appStore.injectedBodyBackground) {
-    resetBackgroundState()
-    return
-  }
-
   if (!enabled || !url) {
     resetBackgroundState()
     return
@@ -143,7 +138,7 @@ onUnmounted(() => {
         v-if="showDefaultBackground"
         class="absolute inset-0 mx-0 max-w-none overflow-hidden dark:bg-slate-900/50" :class="[!appStore.injectedBodyBackground && 'bg-slate-50']"
       >
-        <div class="absolute top-0 left-1/2 -ml-152 h-100 w-325 dark:mask-[linear-gradient(white,transparent)]">
+        <div v-if="!appStore.injectedBodyBackground" class="absolute top-0 left-1/2 -ml-152 h-100 w-325 dark:mask-[linear-gradient(white,transparent)]">
           <div
             class="absolute inset-0 bg-linear-to-r from-emerald-500 to-lime-300 mask-[radial-gradient(farthest-side_at_top,white,transparent)] opacity-40 dark:from-emerald-500/30 dark:to-lime-300/30 dark:opacity-100"
           >

@@ -18,6 +18,8 @@
 
 拷贝&调整下方参数，将其填入到 **CF Server Monitor** 后端设置页面的 `主题自定义配置 JSON` 中并保存。
 
+背景优先使用 CFSM 原生配置，深色模式保留原有深色底。没有原生背景时才使用主题自定义背景；只配置一个背景地址时，深浅色模式共用。
+
 ```
 {
   "configuration": [
@@ -188,6 +190,8 @@ bun run preview
 
 自定义域名和其他静态平台通常保留 `BASE_PATH=./` 即可。
 
+版本 `1.2.8.1` 沿用 `main` 源码分支和 `build` 产物分支。更新 `package.json` 版本并推送后，现有工作流会把构建结果发布到 `build`；按 CFSM 规范，产物根目录仅包含 `index.html` 和 `assets/`，国旗及系统图标由 CFSM 提供。
+
 ### 主题开发文档：
 
 - [CF-Server-Monitor项目地址](https://github.com/huilang-me/CF-Server-Monitor)
@@ -198,9 +202,9 @@ bun run preview
 ## 运行时约定
 
 - 路由：`/#/`、`/#/server/:id`
-- 后端管理入口：`${origin}#/admin`
+- 后端管理入口：`${origin}/admin#/admin`
 - 后端地址为当前页面 origin（同源部署）
-- 匿名用户最多可查询近 24 小时的历史数据；登录且开启长历史时最多可查询近 7 天
+- 匿名用户最多可查询近 24 小时的历史数据；登录后最多可查询近 7 天，无需额外的长历史开关
 
 ## 致谢
 

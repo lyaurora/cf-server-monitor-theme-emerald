@@ -191,6 +191,8 @@ class InitManager {
         status.ram_total = currentNode?.mem_total ?? status.ram_total
       if (!sampleHasField(sample.data, 'swap_total'))
         status.swap_total = current.swap_total
+      if (!sampleHasField(sample.data, 'swap_used'))
+        status.swap = current.swap
       if (!sampleHasField(sample.data, 'disk_total'))
         status.disk_total = current.disk_total
       if (!sampleHasField(sample.data, 'disk_used', 'disk'))

@@ -1,6 +1,6 @@
 import type { EarthViewMode, NodeViewMode, PublicSettings, ThemeMode } from '@/utils/api'
 import type { ByteDecimalsConfig } from '@/utils/helper'
-import { usePreferredDark, useStorageAsync } from '@vueuse/core'
+import { useEventListener, usePreferredDark, useStorageAsync } from '@vueuse/core'
 import { defineStore } from 'pinia'
 import { computed, ref, watch } from 'vue'
 import { resolvePingLines, saveNodePingLines, switchPingLine } from '@/utils/api'
@@ -134,24 +134,18 @@ const useAppStore = defineStore('app', () => {
     return publicSettings.value?.themeSettings.policeUrl ?? ''
   })
 
-  /**
-   * 新版后端把站点背景直接注入为 body 的 background-image（iOS 特判下为 body::after）。
-   * 页面加载时检测一次；注入存在时视为已启用背景。
-   */
-  const injectedBodyBackground = ref((() => {
+  // CFSM 桌面背景在 body，移动端背景在 body::after。
+  const injectedBodyBackground = ref(false)
+  function refreshInjectedBackground() {
     if (typeof document === 'undefined')
-      return false
-    const body = getComputedStyle(document.body)
-    if (body.backgroundImage && body.backgroundImage !== 'none')
-      return true
-    const after = getComputedStyle(document.body, '::after')
-    return !!(after.backgroundImage && after.backgroundImage !== 'none')
-  })())
-
-  // 计算属性：自定义背景配置
-  const backgroundEnabled = computed<boolean>(() => {
-    return (publicSettings.value?.themeSettings.backgroundEnabled ?? false) || injectedBodyBackground.value
-  })
+      return
+    injectedBodyBackground.value = [null, '::after'].some((pseudo) => {
+      const image = getComputedStyle(document.body, pseudo).backgroundImage
+      return image && image !== 'none'
+    })
+  }
+  refreshInjectedBackground()
+  useEventListener('resize', refreshInjectedBackground)
 
   const backgroundType = computed<'image' | 'video'>(() => {
     return publicSettings.value?.themeSettings.backgroundType ?? 'image'
@@ -213,18 +207,20 @@ const useAppStore = defineStore('app', () => {
   })
 
   const resolvedThemeMode = computed<'light' | 'dark'>(() => isDark.value ? 'dark' : 'light')
+  watch([resolvedThemeMode, publicSettings], refreshInjectedBackground, { flush: 'post' })
 
   // 计算属性：当前主题模式下的背景 URL
   const currentBackgroundUrl = computed<string>(() => {
-    if (!backgroundEnabled.value) {
+    if (injectedBodyBackground.value || !publicSettings.value?.themeSettings.backgroundEnabled) {
       return ''
     }
 
     if (resolvedThemeMode.value === 'dark') {
-      return darkBackgroundUrl.value
+      return darkBackgroundUrl.value || lightBackgroundUrl.value
     }
-    return lightBackgroundUrl.value
+    return lightBackgroundUrl.value || darkBackgroundUrl.value
   })
+  const backgroundEnabled = computed(() => injectedBodyBackground.value || !!currentBackgroundUrl.value)
 
   function updateThemeMode(mode?: ThemeMode) {
     if (mode) {

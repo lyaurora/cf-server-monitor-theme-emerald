@@ -98,7 +98,6 @@ export interface SiteConfig {
   site_title?: string
   verified?: boolean
   turnstile_verified?: string | null
-  show_long_history?: boolean
   theme_options?: unknown
   /** 一小时延迟窗口配置（points=输出桶数，hours=窗口时长），前端据此对齐首页 ping/loss 数据粒度 */
   latency_window?: {
@@ -122,7 +121,6 @@ export interface SysConfig {
   show_expire?: boolean
   show_tf?: boolean
   show_time?: boolean
-  show_long_history?: boolean
   /** 后端开关：是否在 /api/servers 输出 ping/loss 一小时窗口；关闭时主题回退到单条 ping 数据 */
   show_three_net_details?: boolean
 }
@@ -1025,8 +1023,8 @@ function trafficLimitType(value: unknown): string {
 }
 
 function pingEntry(name: string, latency: unknown, loss: unknown): NodeStatusPing {
-  const latest = pingWindowNumber(latency) ?? Number.NaN
-  const lossValue = pingWindowNumber(loss) ?? Number.NaN
+  const latest = nullableNumber(latency) ?? Number.NaN
+  const lossValue = nullableNumber(loss) ?? Number.NaN
   return { name, latest, avg: latest, tail: latest, loss: lossValue, min: latest, max: latest }
 }
 
@@ -1063,7 +1061,7 @@ function pingFieldPresent(server: CfServer, field: keyof CfServer): boolean {
   return isPingFieldPresent(server[field])
 }
 
-function pingWindowNumber(value: unknown): number | null {
+function nullableNumber(value: unknown): number | null {
   if (typeof value !== 'number' && typeof value !== 'string')
     return null
   if (String(value).trim() === '')
@@ -1072,14 +1070,19 @@ function pingWindowNumber(value: unknown): number | null {
   return Number.isFinite(number) ? number : null
 }
 
+function optionalMegabytes(value: unknown): number | null {
+  const bytes = (nullableNumber(value) ?? -1) * MB
+  return Number.isFinite(bytes) && bytes >= 0 ? bytes : null
+}
+
 function buildPingWindowPoint(
   ts: number,
   pingPoint: LatencyWindowPoint | undefined,
   lossPoint: LatencyWindowPoint | undefined,
 ): PingWindowPoint {
   const lines = Object.fromEntries(PING_TASKS.map(({ key }) => {
-    const latency = pingWindowNumber(pingPoint?.[key])
-    const loss = pingWindowNumber(lossPoint?.[key])
+    const latency = nullableNumber(pingPoint?.[key])
+    const loss = nullableNumber(lossPoint?.[key])
     return [key, {
       latency: latency !== null && latency >= 0 && loss !== 100 ? latency : null,
       loss: loss !== null && loss >= 0 && loss <= 100 ? loss : latency !== null && latency < 0 ? 100 : null,
@@ -1164,7 +1167,7 @@ export function adaptServer(server: CfServer, apiIndex: number): AdaptedServer {
       region: String(server.region || '').toUpperCase(),
       public_remark: '',
       mem_total: finiteNumber(server.ram_total) * MB,
-      swap_total: finiteNumber(server.swap_total) * MB,
+      swap_total: optionalMegabytes(server.swap_total),
       disk_total: finiteNumber(server.disk_total) * MB,
       version: server.agent_version,
       weight: finiteNumber(server.sort_order),
@@ -1189,8 +1192,8 @@ export function adaptServer(server: CfServer, apiIndex: number): AdaptedServer {
       gpu: finiteNumber(server.gpu),
       ram: finiteNumber(server.ram_used) * MB,
       ram_total: finiteNumber(server.ram_total) * MB,
-      swap: finiteNumber(server.swap_used) * MB,
-      swap_total: finiteNumber(server.swap_total) * MB,
+      swap: optionalMegabytes(server.swap_used),
+      swap_total: optionalMegabytes(server.swap_total),
       load: load[0] ?? 0,
       load5: load[1] ?? 0,
       load15: load[2] ?? 0,
@@ -1255,8 +1258,8 @@ function rowToStatusRecord(uuid: string, row: HistoryRow): StatusRecord {
     gpu: finiteNumber(row.gpu),
     ram: finiteNumber(row.ram_used) * MB,
     ram_total: finiteNumber(row.ram_total) * MB,
-    swap: finiteNumber(row.swap_used) * MB,
-    swap_total: finiteNumber(row.swap_total) * MB,
+    swap: optionalMegabytes(row.swap_used),
+    swap_total: optionalMegabytes(row.swap_total),
     load: load[0] ?? 0,
     load5: load[1] ?? 0,
     load15: load[2] ?? 0,
@@ -1346,9 +1349,8 @@ export class CfMonitorApi {
     const configs = cachedSiteConfigs.length ? cachedSiteConfigs : await fetchSiteConfigs()
     const first = configs[0]
     const loggedIn = configs.some(config => config.authorization)
-    // 未登录访客最长可看 24h；已登录且开启 show_long_history 时最长可看近 7 天（168h），
-    // 多后端聚合模式不支持长历史，回退到 24h
-    const historyHours = loggedIn ? (first?.show_long_history && !hasMultipleApiBases() ? 168 : 24) : 24
+    // 与 CFSM 历史接口一致：访客最多 24 小时，登录后最多 7 天。
+    const historyHours = loggedIn ? 168 : 24
     return {
       allow_cors: true,
       custom_body: '',

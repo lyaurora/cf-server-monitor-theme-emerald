@@ -253,7 +253,7 @@ const systemInfo = computed<InfoItem[]>(() => [
 
 const storageInfo = computed<InfoItem[]>(() => [
   { label: '内存', value: formatBytes(data.value?.mem_total ?? 0), icon: 'icon-park-outline:memory' },
-  { label: '内存交换', value: formatBytes(data.value?.swap_total ?? 0), icon: 'icon-park-outline:switch' },
+  { label: '内存交换', value: data.value?.swap_total != null ? formatBytes(data.value.swap_total) : '-', icon: 'icon-park-outline:switch' },
   { label: '硬盘', value: formatBytes(data.value?.disk_total ?? 0), icon: 'icon-park-outline:hard-disk' },
 ])
 

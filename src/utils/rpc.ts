@@ -20,7 +20,7 @@ export interface Client {
   remark?: string
   public_remark: string
   mem_total: number
-  swap_total: number
+  swap_total: number | null
   disk_total: number
   version?: string
   weight: number
@@ -70,8 +70,8 @@ export interface NodeStatus {
   gpu: number
   ram: number
   ram_total: number
-  swap: number
-  swap_total: number
+  swap: number | null
+  swap_total: number | null
   load: number
   load5: number
   load15: number
@@ -101,8 +101,8 @@ export interface StatusRecord {
   gpu: number
   ram: number
   ram_total: number
-  swap: number
-  swap_total: number
+  swap: number | null
+  swap_total: number | null
   load: number
   load5: number
   load15: number
