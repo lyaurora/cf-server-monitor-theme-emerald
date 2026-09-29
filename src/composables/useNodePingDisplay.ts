@@ -2,7 +2,6 @@ import type { MaybeRefOrGetter } from 'vue'
 import { computed, toValue } from 'vue'
 import { NODE_PING_BAR_COUNT, pingAverage, useNodePingStats } from '@/composables/useNodePingStats'
 import { PING_HISTORY_WINDOW_MS, useNodesStore } from '@/stores/nodes'
-import { formatDateTime } from '@/utils/helper'
 
 export type NodePingMetric = 'latency' | 'loss'
 
@@ -19,6 +18,11 @@ interface UseNodePingDisplayOptions {
   emptyDisplayText?: string
   loadingPanelTooltipText?: Partial<Record<NodePingMetric, string>>
   emptyPanelTooltipText?: Partial<Record<NodePingMetric, string>>
+}
+
+function formatBarTime(time: number): string {
+  const date = new Date(time)
+  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
 }
 
 function getLatencyToneClass(latency: number): string {
@@ -62,7 +66,7 @@ export function useNodePingDisplay(
    * 将最近两小时数据按时间划分为 NODE_PING_BAR_COUNT 根柱子，
    * 每根柱按段内采样覆盖时长加权。
    */
-  function buildPingBars(metric: NodePingMetric): NodePingBar[] {
+  function buildPingBars(metric: NodePingMetric, previous?: NodePingBar[]): NodePingBar[] {
     const points = pingStats.history.value
     if (!points.length)
       return []
@@ -91,8 +95,7 @@ export function useNodePingDisplay(
       }
 
       const value = pingAverage(segmentPoints, metric, segmentEnd, nodesStore.pingSampleIntervalMs)
-      const segmentTime = new Date(segmentStart).toISOString()
-      const timeRange = `${formatDateTime(segmentTime, 'HH:mm')} - ${formatDateTime(new Date(segmentEnd).toISOString(), 'HH:mm')}`
+      const timeRange = `${formatBarTime(segmentStart)} - ${formatBarTime(segmentEnd)}`
 
       bars.push({
         key: `${metric}-${index}`,
@@ -105,6 +108,13 @@ export function useNodePingDisplay(
       })
     }
 
+    // New samples can leave every displayed value unchanged; avoid invalidating the row in that case.
+    if (previous?.length === bars.length && bars.every((bar, index) => {
+      const old = previous[index]!
+      return bar.key === old.key && bar.className === old.className && bar.tooltip === old.tooltip
+    })) {
+      return previous
+    }
     return bars
   }
 
@@ -126,8 +136,8 @@ export function useNodePingDisplay(
     }))
   }
 
-  const latencyBars = computed(() => buildPingBars('latency'))
-  const lossBars = computed(() => buildPingBars('loss'))
+  const latencyBars = computed<NodePingBar[]>(previous => buildPingBars('latency', previous))
+  const lossBars = computed<NodePingBar[]>(previous => buildPingBars('loss', previous))
   const latencyRenderBars = computed(() => latencyBars.value.length ? latencyBars.value : buildEmptyPingBars('latency'))
   const lossRenderBars = computed(() => lossBars.value.length ? lossBars.value : buildEmptyPingBars('loss'))
 

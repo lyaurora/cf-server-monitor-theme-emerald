@@ -131,6 +131,8 @@ function handlePointerDown(event: PointerEvent) {
 function handleClick(event: MouseEvent) {
   if (shouldStopNextClick && Date.now() - lastTouchOpenAt < 800)
     event.stopPropagation()
+  else
+    closeTooltip()
 
   shouldStopNextClick = false
 }
@@ -138,6 +140,13 @@ function handleClick(event: MouseEvent) {
 function openHoverTooltip(event: PointerEvent | FocusEvent) {
   if ('pointerType' in event && isTouchLikePointer(event))
     return
+  if (!('pointerType' in event)) {
+    // Restoring dialog focus must not revive the dismissed tooltip, including after Escape.
+    if (!(event.target as HTMLElement)?.matches(':focus-visible')
+      || (event.relatedTarget instanceof Element && event.relatedTarget.closest('[role="dialog"], [role="alertdialog"]'))) {
+      return
+    }
+  }
   updateCursor(event)
   if (hasTooltip.value)
     isHoverOpen.value = true
@@ -181,8 +190,7 @@ onBeforeUnmount(removeDocumentListeners)
     :aria-describedby="hasTooltip && (isOpen || isHoverOpen) ? tooltipId : undefined"
     :class="cn('group/data-tooltip relative inline-block', props.class)"
     @pointerdown.capture="handlePointerDown"
-    @pointerenter="openHoverTooltip"
-    @pointermove="updateCursor"
+    @pointermove="openHoverTooltip"
     @pointerleave="closeHoverTooltip"
     @focusin="openHoverTooltip"
     @focusout="closeHoverTooltip"

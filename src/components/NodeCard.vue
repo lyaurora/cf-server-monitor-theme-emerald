@@ -15,6 +15,7 @@ import { formatBytesPerSecondWithConfig, formatBytesWithConfig, formatDateTime, 
 import { formatOfflineTime, getCustomTags, getPriceTags, getRemainingTimeTagClass, getTrafficLevel, getTrafficUsed, getTrafficUsedPercentage, hasConfiguredPrice, hasRegion, showTrafficProgress } from '@/utils/nodeHelper'
 import { getOSImage, getOSName } from '@/utils/osImageHelper'
 import { getRegionCode, getRegionDisplayName } from '@/utils/regionHelper'
+import { getDaysUntilExpired, getExpireStatus } from '@/utils/tagHelper'
 
 const props = defineProps<{ node: NodeData }>()
 
@@ -47,7 +48,20 @@ const remainingTimeTagClass = computed(() => getRemainingTimeTagClass(props.node
 const customTags = computed(() => getCustomTags(props.node))
 
 const pingLines = computed(() => resolvePingLines(Object.keys(props.node.ping ?? {}), appStore.publicSettings?.themeSettings.pingLinesByNode[props.node.uuid]))
-const expiryTag = computed(() => priceTags.value.at(-1))
+const expiryText = computed(() => {
+  if (!props.node.expired_at)
+    return '--'
+  const expiresAt = new Date(props.node.expired_at).getTime()
+  if (!Number.isFinite(expiresAt))
+    return '--'
+  if (expiresAt <= Date.now())
+    return '已过期'
+  const status = getExpireStatus(props.node.expired_at)
+  if (status === 'long_term')
+    return '长期'
+  const days = getDaysUntilExpired(props.node.expired_at)
+  return days > 0 ? `剩余 ${days} 天` : '不足 1 天'
+})
 const planText = computed(() => hasConfiguredPrice(props.node) ? priceTags.value[0]?.text : '--')
 
 function openPingDialog() {
@@ -209,12 +223,12 @@ function openPingDialog() {
               </div>
               <div class="flex min-w-0 flex-col gap-1">
                 <DataTooltip placement="top" :content="expiredDate" class="min-w-0" content-class="whitespace-nowrap">
-                  <div class="flex items-center gap-0.5">
+                  <div class="flex items-center gap-1" :class="remainingTimeTagClass">
                     <Icon icon="tabler:calendar-stats" width="12" height="12" class="shrink-0" />
-                    <span class="truncate" :class="remainingTimeTagClass">{{ props.node.expired_at ? expiryTag?.text.replace('+', '剩余 ') : '--' }}</span>
+                    <span class="truncate">{{ expiryText }}</span>
                   </div>
                 </DataTooltip>
-                <div class="flex items-center gap-0.5">
+                <div class="flex items-center gap-1">
                   <Icon icon="tabler:coins" width="12" height="12" class="shrink-0" />
                   <span class="truncate">{{ planText }}</span>
                 </div>

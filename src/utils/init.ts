@@ -212,7 +212,14 @@ class InitManager {
         status.gpu = current.gpu
       if (!sampleHasField(sample.data, 'temp'))
         status.temp = current.temp
-      status.ping = Object.keys(status.ping ?? {}).length
+      // CFSM repeats Ping fields in resource updates; unchanged values should keep their identity.
+      const pingChanged = Object.entries(status.ping ?? {}).some(([key, next]) => {
+        const previous = current.ping?.[key]
+        return !previous || Object.entries(next).some(([field, value]) =>
+          !Object.is(value, previous[field as keyof typeof previous]),
+        )
+      })
+      status.ping = pingChanged
         ? { ...current.ping, ...status.ping }
         : current.ping
     }
