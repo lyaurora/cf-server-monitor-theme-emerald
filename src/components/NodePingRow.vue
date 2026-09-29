@@ -2,7 +2,7 @@
 import type { NodeData } from '@/stores/nodes'
 import { Icon } from '@iconify/vue'
 import { DropdownMenuContent, DropdownMenuItem, DropdownMenuPortal, DropdownMenuRoot, DropdownMenuTrigger } from 'reka-ui'
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { DataTooltip } from '@/components/ui/data-tooltip'
 import { useNodePingDisplay } from '@/composables/useNodePingDisplay'
 import { useAppStore } from '@/stores/app'
@@ -17,6 +17,7 @@ const panels = computed(() => [
   { name: '延迟', bars: latencyRenderBars.value },
   { name: '丢包', bars: lossRenderBars.value },
 ])
+const hoveredBarIndex = ref<number | null>(null)
 
 async function selectLine(key: string) {
   try {
@@ -67,19 +68,20 @@ async function selectLine(key: string) {
     <DataTooltip as="button" type="button" placement="cursor" class="rounded text-right font-medium text-foreground/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" :content="lossPanelTooltip" :aria-label="`${name} 丢包 ${lossDisplay}`" @click="emit('pingClick')">
       {{ lossDisplay }}
     </DataTooltip>
-    <button
-      v-for="panel in panels" :key="panel.name" type="button"
+    <DataTooltip
+      v-for="panel in panels" :key="panel.name" as="button" type="button" placement="cursor"
+      :content="panel.bars[hoveredBarIndex ?? panel.bars.length - 1]?.tooltip"
+      content-class="whitespace-nowrap w-max px-1.5 !leading-[1.2] text-[11px]"
       class="grid h-2 items-center gap-px rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       :style="{ gridTemplateColumns: `repeat(${panel.bars.length}, minmax(0, 1fr))` }"
       :aria-label="`${name} ${panel.name}历史，查看图表`" @click.capture.stop="emit('pingClick')"
+      @pointerleave="hoveredBarIndex = null"
     >
-      <DataTooltip
-        v-for="bar in panel.bars" :key="bar.key" as="span" placement="cursor"
-        :content="bar.tooltip" class="h-[5px] w-full"
-        content-class="whitespace-nowrap w-max px-1.5 !leading-[1.2] text-[11px]"
-      >
-        <span class="block h-full w-full rounded-[1px] transition-transform duration-150 group-hover/data-tooltip:scale-y-200" :class="bar.className" />
-      </DataTooltip>
-    </button>
+      <span
+        v-for="(bar, barIndex) in panel.bars" :key="bar.key"
+        class="block h-[5px] w-full rounded-[1px] transition-transform duration-150 hover:scale-y-200" :class="bar.className"
+        @pointerenter="hoveredBarIndex = barIndex"
+      />
+    </DataTooltip>
   </div>
 </template>

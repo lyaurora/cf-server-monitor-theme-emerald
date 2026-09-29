@@ -230,8 +230,10 @@ function openPingDialog() {
               </span>
             </div>
             <div v-if="nodesStore.showThreeNetDetails" class="flex flex-col gap-2">
+              <!-- History reacts to its own store; CPU/traffic updates need not redraw these rows. -->
               <NodePingRow
                 v-for="(line, index) in pingLines" :key="`${index}-${line}`"
+                v-memo="[props.node.uuid, props.node.ping, pingLines.join(',')]"
                 :node="props.node" :line-key="line" :index="index" :lines="pingLines"
                 @ping-click="openPingDialog"
               />

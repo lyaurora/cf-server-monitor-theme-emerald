@@ -318,11 +318,11 @@ function buildInitialOptions(): COBEOptions {
   }
 }
 
-function updateGlobeFrame() {
+function updateGlobeFrame(size?: { width: number, height: number }) {
   if (!globe)
     return
-  const { width, height } = getRenderSize()
-  globe.update({ phi, theta, width, height })
+  // Passing dimensions resets Cobe's drawing buffer, even when the size is unchanged.
+  globe.update({ phi, theta, ...size })
   syncClusterOverlayPositions()
 }
 
@@ -421,7 +421,7 @@ watch(
   ([width, height]) => {
     if (!globe || width <= 0 || height <= 0)
       return
-    updateGlobeFrame()
+    updateGlobeFrame({ width, height })
   },
 )
 

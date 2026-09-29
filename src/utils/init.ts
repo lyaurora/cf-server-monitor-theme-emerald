@@ -212,7 +212,9 @@ class InitManager {
         status.gpu = current.gpu
       if (!sampleHasField(sample.data, 'temp'))
         status.temp = current.temp
-      status.ping = { ...current.ping, ...status.ping }
+      status.ping = Object.keys(status.ping ?? {}).length
+        ? { ...current.ping, ...status.ping }
+        : current.ping
     }
 
     this.queueNodeStatuses({ [uuid]: status })

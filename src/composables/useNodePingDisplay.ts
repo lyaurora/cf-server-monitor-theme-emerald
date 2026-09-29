@@ -69,18 +69,26 @@ export function useNodePingDisplay(
 
     const perLine = !!toValue(options.line)
     const barCount = perLine ? NODE_PING_BAR_COUNT : Math.min(NODE_PING_BAR_COUNT, points.length)
-    const lastTime = perLine ? Math.max(nodesStore.pingNow.getTime(), Date.parse(points.at(-1)!.time)) : Date.parse(points.at(-1)!.time)
-    const firstTime = perLine ? lastTime - PING_HISTORY_WINDOW_MS : Date.parse(points[0]!.time)
+    const lastTime = perLine ? Math.max(nodesStore.pingNow.getTime(), points.at(-1)!.timeMs) : points.at(-1)!.timeMs
+    const firstTime = perLine ? lastTime - PING_HISTORY_WINDOW_MS : points[0]!.timeMs
     const segmentSize = Math.max(1, (lastTime - firstTime) / barCount)
 
     const bars: NodePingBar[] = []
+    // Store histories are sorted: consume each sample once instead of rescanning for every bar.
+    let pointIndex = 0
     for (let index = 0; index < barCount; index++) {
       const segmentStart = firstTime + index * segmentSize
       const segmentEnd = index === barCount - 1 ? lastTime + 1 : segmentStart + segmentSize
-      const segmentPoints = points.filter((point) => {
-        const time = Date.parse(point.time)
-        return time >= segmentStart && time < segmentEnd
-      })
+      const segmentPoints = []
+      while (pointIndex < points.length) {
+        const point = points[pointIndex]!
+        const time = point.timeMs
+        if (time >= segmentEnd)
+          break
+        if (time >= segmentStart)
+          segmentPoints.push(point)
+        pointIndex++
+      }
 
       const value = pingAverage(segmentPoints, metric, segmentEnd, nodesStore.pingSampleIntervalMs)
       const segmentTime = new Date(segmentStart).toISOString()

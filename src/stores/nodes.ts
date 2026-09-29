@@ -1,13 +1,16 @@
 import type { Client, NodeStatus, NodeStatusPing, PingWindowPoint } from '@/utils/rpc'
 import { useNow } from '@vueuse/core'
 import { defineStore } from 'pinia'
-import { computed, ref } from 'vue'
+import { computed, ref, shallowReactive } from 'vue'
 import { parseNodeGroups } from '@/utils/groupHelper'
 
 /** 流量限制类型 */
 export type TrafficLimitType = 'up' | 'down' | 'min' | 'max' | 'sum'
 
-export interface PingHistoryPoint extends PingWindowPoint {}
+export interface PingHistoryPoint extends PingWindowPoint {
+  /** Parse once on ingestion; all history calculations use milliseconds. */
+  timeMs: number
+}
 
 export const PING_HISTORY_WINDOW_MS = 2 * 3_600_000
 
@@ -128,7 +131,8 @@ const useNodesStore = defineStore('nodes', () => {
   // ===== 状态 =====
   const nodes = ref<NodeData[]>([])
   const earthNodes = ref<NodeData[]>([])
-  const pingHistoryByUuid = ref<Record<string, PingHistoryPoint[]>>({})
+  // Histories are replaced as snapshots; only track each node's array, not every sample field.
+  const pingHistoryByUuid = shallowReactive<Record<string, PingHistoryPoint[]>>(Object.create(null))
   const pingNow = useNow({ interval: 60_000 })
   const wsConnectionState = ref<WsConnectionState>('disconnected')
   const wsReconnectAttempts = ref<number>(0)
@@ -328,7 +332,7 @@ const useNodesStore = defineStore('nodes', () => {
     const entries = Object.entries(status.ping ?? {}).filter(([, entry]) => Number.isFinite(entry.latest) || Number.isFinite(entry.loss))
     if (!entries.length)
       return
-    const history = pingHistoryByUuid.value[uuid] ?? []
+    const history = pingHistoryByUuid[uuid] ?? []
     const lines = { ...history.find(item => item.time === status.time)?.lines }
     for (const [key, entry] of entries) {
       const previous = lines[key]
@@ -344,10 +348,11 @@ const useNodesStore = defineStore('nodes', () => {
       const values = Object.values(lines).flatMap(line => line[metric] === null ? [] : [line[metric]])
       return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null
     }
-    const point = { time: status.time, latency: average('latency'), loss: average('loss'), lines }
+    const point = { time: status.time, timeMs: sampleTime, latency: average('latency'), loss: average('loss'), lines }
+    const cutoff = Date.now() - PING_HISTORY_WINDOW_MS
     // ponytail: bounded two-hour array; use a ring buffer if very large fleets make insertion costly.
-    pingHistoryByUuid.value[uuid] = [...history.filter(item => item.time !== point.time && Date.parse(item.time) >= Date.now() - PING_HISTORY_WINDOW_MS), point]
-      .sort((a, b) => Date.parse(a.time) - Date.parse(b.time))
+    pingHistoryByUuid[uuid] = [...history.filter(item => item.time !== point.time && item.timeMs >= cutoff), point]
+      .sort((a, b) => a.timeMs - b.timeMs)
   }
 
   /**
@@ -398,10 +403,10 @@ const useNodesStore = defineStore('nodes', () => {
         // 开关开启且后端返回窗口时直接作为历史（已含最新桶），
         // 否则（开关关闭 / 窗口缺失）由实时样本按单条 ping 值逐步累积
         if (pingHistoryConfig.value.showThreeNetDetails && status.pingWindow?.length) {
-          pingHistoryByUuid.value = {
-            ...pingHistoryByUuid.value,
-            [uuid]: status.pingWindow.filter(point => Date.parse(point.time) >= Date.now() - PING_HISTORY_WINDOW_MS),
-          }
+          const cutoff = Date.now() - PING_HISTORY_WINDOW_MS
+          pingHistoryByUuid[uuid] = status.pingWindow
+            .map(point => ({ ...point, timeMs: Date.parse(point.time) }))
+            .filter(point => point.timeMs >= cutoff)
         }
         recordPingSample(uuid, status)
       }
@@ -434,18 +439,17 @@ const useNodesStore = defineStore('nodes', () => {
   function updateNodeStatuses(statuses: Record<string, NodeStatus>, trackPing = true): void {
     let hasChanges = false
 
-    Object.entries(statuses).forEach(([uuid, status]) => {
-      const index = nodes.value.findIndex(n => n.uuid === uuid)
-      if (index === -1)
+    nodes.value.forEach((node, index) => {
+      if (!Object.hasOwn(statuses, node.uuid))
         return
 
-      const node = nodes.value[index]
-      if (!node)
+      const status = statuses[node.uuid]
+      if (!status)
         return
 
       nodes.value[index] = updateNodeStatus(node, extractStatusData(status))
       if (trackPing)
-        recordPingSample(uuid, status)
+        recordPingSample(node.uuid, status)
       hasChanges = true
     })
 
@@ -530,7 +534,8 @@ const useNodesStore = defineStore('nodes', () => {
    */
   function clearNodes(): void {
     nodes.value = []
-    pingHistoryByUuid.value = {}
+    for (const uuid of Object.keys(pingHistoryByUuid))
+      delete pingHistoryByUuid[uuid]
     refreshEarthNodes(true)
   }
 

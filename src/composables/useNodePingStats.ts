@@ -13,7 +13,7 @@ export interface NodePingStatsState {
   hasData: boolean
 }
 
-export const NODE_PING_BAR_COUNT = 10
+export const NODE_PING_BAR_COUNT = 20
 
 /** 按采样覆盖时长加权，断档最多延续四个后端采样间隔。 */
 export function pingAverage(points: PingHistoryPoint[], metric: 'latency' | 'loss', now: number, stepMs: number): number | null {
@@ -23,8 +23,8 @@ export function pingAverage(points: PingHistoryPoint[], metric: 'latency' | 'los
     const value = point[metric]
     if (value === null || !Number.isFinite(value))
       return
-    const time = Date.parse(point.time)
-    const end = Math.min(Date.parse(points[index + 1]?.time ?? '') || now, now, time + stepMs * 4)
+    const time = point.timeMs
+    const end = Math.min(points[index + 1]?.timeMs ?? now, now, time + stepMs * 4)
     const weight = Math.max(1, end - time)
     total += value * weight
     weights += weight
@@ -42,10 +42,11 @@ export function useNodePingStats(
     if (!enabled.value)
       return []
     const now = nodesStore.pingNow.getTime()
+    const latest = Math.max(now, Date.now())
     const points = (nodesStore.pingHistoryByUuid[toValue(uuid)] ?? [])
-      .filter(point => Date.parse(point.time) >= now - PING_HISTORY_WINDOW_MS && Date.parse(point.time) <= Math.max(now, Date.now()))
+      .filter(point => point.timeMs >= now - PING_HISTORY_WINDOW_MS && point.timeMs <= latest)
     const line = toValue(options?.line)
-    return line ? points.flatMap(point => point.lines?.[line] ? [{ time: point.time, ...point.lines[line] }] : []) : points
+    return line ? points.flatMap(point => point.lines?.[line] ? [{ time: point.time, timeMs: point.timeMs, ...point.lines[line] }] : []) : points
   })
 
   const stats = computed<NodePingStatsState>(() => {
