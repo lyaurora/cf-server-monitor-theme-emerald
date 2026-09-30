@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { Arc, COBEOptions, Globe, Marker } from 'cobe'
+import type { Arc, COBEOptions, Globe } from 'cobe'
 import type { ComponentPublicInstance } from 'vue'
 import type { NodeData } from '@/stores/nodes'
 import { Icon } from '@iconify/vue'
@@ -253,13 +253,6 @@ function bindClusterOverlayRef(code: string): (el: Element | ComponentPublicInst
   return binder
 }
 
-const markers = computed<Marker[]>(() => {
-  return regionClusters.value.map(cluster => ({
-    location: cluster.coord,
-    size: 0, // 不渲染圆点
-  }))
-})
-
 // 从各地区汇聚到用户当前位置；无用户坐标时回退到 hub 拓扑
 const arcs = computed<Arc[]>(() => {
   const clusters = regionClusters.value
@@ -309,7 +302,6 @@ function buildInitialOptions(): COBEOptions {
     baseColor: colors.baseColor,
     markerColor: colors.markerColor,
     glowColor: colors.glowColor,
-    markers: markers.value,
     arcs: arcs.value,
     arcColor: colors.arcColor,
     arcWidth: 0.8,
@@ -440,7 +432,7 @@ watch(
   async () => {
     if (!globe)
       return
-    globe.update({ markers: markers.value, arcs: arcs.value })
+    globe.update({ arcs: arcs.value })
     await nextTick()
     syncClusterOverlayPositions()
     if (!shouldAutoRotate.value)

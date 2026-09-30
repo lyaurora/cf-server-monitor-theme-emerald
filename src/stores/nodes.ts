@@ -333,7 +333,8 @@ const useNodesStore = defineStore('nodes', () => {
     if (!entries.length)
       return
     const history = pingHistoryByUuid[uuid] ?? []
-    const lines = { ...history.find(item => item.time === status.time)?.lines }
+    const append = !history.length || sampleTime > history.at(-1)!.timeMs
+    const lines = { ...(append ? undefined : history.find(item => item.time === status.time)?.lines) }
     for (const [key, entry] of entries) {
       const previous = lines[key]
       const latency = Number.isFinite(entry.latest)
@@ -350,6 +351,15 @@ const useNodesStore = defineStore('nodes', () => {
     }
     const point = { time: status.time, timeMs: sampleTime, latency: average('latency'), loss: average('loss'), lines }
     const cutoff = Date.now() - PING_HISTORY_WINDOW_MS
+    if (append) {
+      let start = 0
+      while (start < history.length && history[start]!.timeMs < cutoff)
+        start++
+      const next = history.slice(start)
+      next.push(point)
+      pingHistoryByUuid[uuid] = next
+      return
+    }
     // ponytail: bounded two-hour array; use a ring buffer if very large fleets make insertion costly.
     pingHistoryByUuid[uuid] = [...history.filter(item => item.time !== point.time && item.timeMs >= cutoff), point]
       .sort((a, b) => a.timeMs - b.timeMs)
@@ -363,7 +373,8 @@ const useNodesStore = defineStore('nodes', () => {
     if (!force && now - lastEarthSnapshotAt < EARTH_SNAPSHOT_INTERVAL_MS)
       return
 
-    earthNodes.value = [...nodes.value]
+    // Resource updates mutate nodes; keep the globe's snapshot until its next refresh.
+    earthNodes.value = nodes.value.map(node => ({ ...node }))
     lastEarthSnapshotAt = now
   }
 
@@ -439,7 +450,7 @@ const useNodesStore = defineStore('nodes', () => {
   function updateNodeStatuses(statuses: Record<string, NodeStatus>, trackPing = true): void {
     let hasChanges = false
 
-    nodes.value.forEach((node, index) => {
+    nodes.value.forEach((node) => {
       if (!Object.hasOwn(statuses, node.uuid))
         return
 
@@ -447,7 +458,8 @@ const useNodesStore = defineStore('nodes', () => {
       if (!status)
         return
 
-      nodes.value[index] = updateNodeStatus(node, extractStatusData(status))
+      // Preserve node identity so resource ticks do not invalidate filtered lists.
+      Object.assign(node, extractStatusData(status))
       if (trackPing)
         recordPingSample(node.uuid, status)
       hasChanges = true

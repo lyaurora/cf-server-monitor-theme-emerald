@@ -9,6 +9,7 @@ import { DataTooltip } from '@/components/ui/data-tooltip'
 import { ProgressThin } from '@/components/ui/progress-thin'
 import { useBackgroundSurface } from '@/composables/useBackgroundSurface'
 import { useAppStore } from '@/stores/app'
+import { useNodesStore } from '@/stores/nodes'
 import { getApiAssetUrl } from '@/utils/api'
 import { formatBytesPerSecondWithConfig, formatBytesWithConfig, formatUptimeWithFormat, getStatus } from '@/utils/helper'
 import { formatOfflineTime, getCustomTags, getPriceTags, getRemainingTimeTagClass, getTrafficUsed, getTrafficUsedPercentage, hasRegion, showTrafficProgress } from '@/utils/nodeHelper'
@@ -36,6 +37,7 @@ const rowStaggerMs = 35
 const rowStaggerLimit = 12
 
 const appStore = useAppStore()
+const nodesStore = useNodesStore()
 const { pickSurfaceClass } = useBackgroundSurface()
 
 const columns: ColumnConfig[] = [
@@ -204,11 +206,11 @@ function getRowTransitionStyle(index: number): Record<string, string> {
                 </div>
                 <div v-if="node.uptime" class="text-[11px] text-muted-foreground/70 truncate">
                   {{ formatUptime(node.uptime ?? 0) }}
-                  <template v-if="getPriceTags(node, appStore.lang).length > 0">
-                    <span v-for="(tag, tagIndex) in getPriceTags(node, appStore.lang)" :key="tagIndex" class="ml-1">
+                  <template v-if="getPriceTags(node, appStore.lang, nodesStore.pingNow.getTime()).length > 0">
+                    <span v-for="(tag, tagIndex) in getPriceTags(node, appStore.lang, nodesStore.pingNow.getTime())" :key="tagIndex" class="ml-1">
                       <template v-if="tag.highlightValue">
                         <span>{{ tag.prefix }}</span>
-                        <span :class="getRemainingTimeTagClass(node)">{{ tag.highlightValue }}</span>
+                        <span :class="getRemainingTimeTagClass(node, nodesStore.pingNow.getTime())">{{ tag.highlightValue }}</span>
                         <span>{{ tag.suffix }}</span>
                       </template>
                       <template v-else>

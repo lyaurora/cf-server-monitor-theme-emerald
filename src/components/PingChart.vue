@@ -791,7 +791,8 @@ watch(() => props.uuid, () => {
   fetchRecords()
 })
 
-watch(nodeInfo, (node) => {
+watch([() => nodeInfo.value?.time, () => nodeInfo.value?.ping], () => {
+  const node = nodeInfo.value
   if (node)
     appendRealtimePing(node)
 })

@@ -167,17 +167,16 @@ export function getBillingCycleText(billingCycle: number, lang: 'zh-CN' | 'en-US
  * @param expiredAt 过期时间（字符串或时间戳）
  * @returns 距离过期的天数，负数表示已过期
  */
-export function getDaysUntilExpired(expiredAt: string | number | undefined): number {
+export function getDaysUntilExpired(expiredAt: string | number | undefined, now = Date.now()): number {
   if (!expiredAt)
     return 0
 
   const expiredDate = dayjs(expiredAt)
-  const now = dayjs()
 
   if (!expiredDate.isValid())
     return 0
 
-  return Math.round(expiredDate.diff(now, 'day', true))
+  return Math.round(expiredDate.diff(dayjs(now), 'day', true))
 }
 
 /**
@@ -185,11 +184,11 @@ export function getDaysUntilExpired(expiredAt: string | number | undefined): num
  * @param expiredAt 过期时间
  * @returns 过期状态
  */
-export function getExpireStatus(expiredAt: string | number | undefined): ExpireStatus {
-  const days = getDaysUntilExpired(expiredAt)
-
-  if (days <= 0)
+export function getExpireStatus(expiredAt: string | number | undefined, now = Date.now()): ExpireStatus {
+  if (!expiredAt || !dayjs(expiredAt).isAfter(now))
     return 'expired'
+
+  const days = getDaysUntilExpired(expiredAt, now)
   if (days < EXPIRE_THRESHOLDS.critical)
     return 'critical'
   if (days < EXPIRE_THRESHOLDS.warning)
@@ -204,8 +203,8 @@ export function getExpireStatus(expiredAt: string | number | undefined): ExpireS
  * @param expiredAt 过期时间
  * @returns Tailwind 文本颜色类
  */
-export function getExpireTextClass(expiredAt: string | number | undefined): string {
-  const status = getExpireStatus(expiredAt)
+export function getExpireTextClass(expiredAt: string | number | undefined, now = Date.now()): string {
+  const status = getExpireStatus(expiredAt, now)
 
   if (status === 'expired' || status === 'critical')
     return 'text-destructive'
@@ -219,9 +218,9 @@ export function getExpireTextClass(expiredAt: string | number | undefined): stri
 /**
  * 格式化节点剩余天数，使用原生主题的带符号短格式。
  */
-export function formatRemainingDays(expiredAt: string | number | undefined): string {
-  const days = getDaysUntilExpired(expiredAt)
-  if (getExpireStatus(expiredAt) === 'long_term')
+export function formatRemainingDays(expiredAt: string | number | undefined, now = Date.now()): string {
+  const days = getDaysUntilExpired(expiredAt, now)
+  if (getExpireStatus(expiredAt, now) === 'long_term')
     return '长期'
   return `${days > 0 ? '+' : ''}${days} 天`
 }
@@ -273,9 +272,9 @@ export function getExpireStatusHexColor(status: ExpireStatus): string {
  * @param lang 语言
  * @returns 显示文本
  */
-export function getExpireText(expiredAt: string | number | undefined, lang: 'zh-CN' | 'en-US' = 'zh-CN'): string {
-  const days = getDaysUntilExpired(expiredAt)
-  const status = getExpireStatus(expiredAt)
+export function getExpireText(expiredAt: string | number | undefined, lang: 'zh-CN' | 'en-US' = 'zh-CN', now = Date.now()): string {
+  const days = getDaysUntilExpired(expiredAt, now)
+  const status = getExpireStatus(expiredAt, now)
 
   if (status === 'expired') {
     return lang === 'zh-CN' ? '已过期' : 'Expired'
@@ -284,6 +283,9 @@ export function getExpireText(expiredAt: string | number | undefined, lang: 'zh-
   if (status === 'long_term') {
     return lang === 'zh-CN' ? '长期' : 'Long-term'
   }
+
+  if (dayjs(expiredAt).valueOf() - now < 86_400_000)
+    return lang === 'zh-CN' ? '不足 1 天' : 'Less than 1 day'
 
   if (lang === 'zh-CN') {
     return `${days} 天`

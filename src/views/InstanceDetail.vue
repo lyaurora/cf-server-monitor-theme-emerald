@@ -163,7 +163,7 @@ const remainingTimeText = computed(() => {
   if (!data.value?.expired_at)
     return '-'
 
-  return getExpireText(data.value.expired_at, appStore.lang)
+  return getExpireText(data.value.expired_at, appStore.lang, nodesStore.pingNow.getTime())
 })
 
 const remainingValueText = computed(() => {
@@ -172,7 +172,7 @@ const remainingValueText = computed(() => {
   if (data.value.price_configured === false)
     return '-'
 
-  const remainingValueCNY = financeHelper.calculateRemainingValueCNY(data.value, exchangeRates.value)
+  const remainingValueCNY = financeHelper.calculateRemainingValueCNY(data.value, exchangeRates.value, nodesStore.pingNow)
   return formatFinanceMetricValue(remainingValueCNY, financeBaseCurrency.value)
 })
 
@@ -180,7 +180,7 @@ const remainingTimeValueClass = computed(() => {
   if (!data.value?.expired_at)
     return ''
 
-  return getExpireTextClass(data.value.expired_at)
+  return getExpireTextClass(data.value.expired_at, nodesStore.pingNow.getTime())
 })
 
 const metricCards = computed<MetricCard[]>(() => {

@@ -14,6 +14,7 @@ import {
   getWebSocketBases,
   hasMultipleApiBases,
   isEnabledValue,
+  mergeServerPingSample,
 } from '@/utils/api'
 import { requestTurnstileToken } from '@/utils/turnstile'
 
@@ -212,16 +213,7 @@ class InitManager {
         status.gpu = current.gpu
       if (!sampleHasField(sample.data, 'temp'))
         status.temp = current.temp
-      // CFSM repeats Ping fields in resource updates; unchanged values should keep their identity.
-      const pingChanged = Object.entries(status.ping ?? {}).some(([key, next]) => {
-        const previous = current.ping?.[key]
-        return !previous || Object.entries(next).some(([field, value]) =>
-          !Object.is(value, previous[field as keyof typeof previous]),
-        )
-      })
-      status.ping = pingChanged
-        ? { ...current.ping, ...status.ping }
-        : current.ping
+      status.ping = mergeServerPingSample(sample.data, current.ping)
     }
 
     this.queueNodeStatuses({ [uuid]: status })

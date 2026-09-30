@@ -804,7 +804,8 @@ const processChartOption = computed(() => ({
 
 // 生命周期 ====================
 
-watch(nodeInfo, (node) => {
+watch(() => nodeInfo.value?.time, () => {
+  const node = nodeInfo.value
   if (node)
     appendRealtimeStatus(node)
 })

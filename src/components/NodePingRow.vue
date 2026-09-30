@@ -32,7 +32,7 @@ async function selectLine(key: string) {
 <template>
   <div class="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px]" @click.stop @keydown.stop>
     <div class="flex min-w-0 items-center justify-between gap-1">
-      <DropdownMenuRoot v-if="appStore.isLoggedIn">
+      <DropdownMenuRoot v-if="appStore.isLoggedIn" :modal="false">
         <DropdownMenuTrigger as-child>
           <button
             type="button" class="min-w-0 truncate rounded text-left hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
@@ -45,7 +45,7 @@ async function selectLine(key: string) {
           <DropdownMenuContent
             align="start" :side-offset="4"
             class="z-50 max-h-64 min-w-32 overflow-y-auto rounded-md border bg-popover p-1 text-xs text-popover-foreground shadow-md"
-            @click.stop @keydown.stop
+            @click.stop
           >
             <DropdownMenuItem
               v-for="(entry, key) in node.ping" :key="key"

@@ -73,7 +73,8 @@ export function useNodePingDisplay(
 
     const perLine = !!toValue(options.line)
     const barCount = perLine ? NODE_PING_BAR_COUNT : Math.min(NODE_PING_BAR_COUNT, points.length)
-    const lastTime = perLine ? Math.max(nodesStore.pingNow.getTime(), points.at(-1)!.timeMs) : points.at(-1)!.timeMs
+    const latestTime = points.at(-1)!.endTimeMs ?? points.at(-1)!.timeMs
+    const lastTime = perLine ? Math.max(nodesStore.pingNow.getTime(), latestTime) : latestTime
     const firstTime = perLine ? lastTime - PING_HISTORY_WINDOW_MS : points[0]!.timeMs
     const segmentSize = Math.max(1, (lastTime - firstTime) / barCount)
 
@@ -83,18 +84,18 @@ export function useNodePingDisplay(
     for (let index = 0; index < barCount; index++) {
       const segmentStart = firstTime + index * segmentSize
       const segmentEnd = index === barCount - 1 ? lastTime + 1 : segmentStart + segmentSize
-      const segmentPoints = []
+      // The preceding sample may still cover the beginning of this segment.
+      const segmentPoints = pointIndex > 0 ? [points[pointIndex - 1]!] : []
       while (pointIndex < points.length) {
         const point = points[pointIndex]!
         const time = point.timeMs
         if (time >= segmentEnd)
           break
-        if (time >= segmentStart)
-          segmentPoints.push(point)
+        segmentPoints.push(point)
         pointIndex++
       }
 
-      const value = pingAverage(segmentPoints, metric, segmentEnd, nodesStore.pingSampleIntervalMs)
+      const value = pingAverage(segmentPoints, metric, segmentEnd, nodesStore.pingSampleIntervalMs, segmentStart)
       const timeRange = `${formatBarTime(segmentStart)} - ${formatBarTime(segmentEnd)}`
 
       bars.push({

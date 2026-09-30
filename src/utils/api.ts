@@ -1061,6 +1061,31 @@ function pingFieldPresent(server: CfServer, field: keyof CfServer): boolean {
   return isPingFieldPresent(server[field])
 }
 
+export function mergeServerPingSample(server: Record<string, unknown>, previous: NodeStatus['ping']): NodeStatus['ping'] {
+  let ping = previous
+  for (const task of PING_TASKS) {
+    const hasLatency = Object.hasOwn(server, task.latencyField)
+    const hasLoss = Object.hasOwn(server, task.lossField)
+    if (!hasLatency && !hasLoss)
+      continue
+    const current = previous?.[task.key]
+    const latency = hasLatency ? server[task.latencyField] : current?.latest
+    const loss = hasLoss ? server[task.lossField] : current?.loss
+    const next = isPingFieldPresent(latency) || isPingFieldPresent(loss)
+      ? pingEntry(pingTaskNames[task.key], latency, loss)
+      : undefined
+    if (next ? current && Object.entries(next).every(([field, value]) => Object.is(value, current[field as keyof NodeStatusPing])) : !current)
+      continue
+    if (ping === previous)
+      ping = { ...previous }
+    if (next)
+      ping![task.key] = next
+    else
+      delete ping![task.key]
+  }
+  return ping
+}
+
 function nullableNumber(value: unknown): number | null {
   if (typeof value !== 'number' && typeof value !== 'string')
     return null
@@ -1137,8 +1162,9 @@ export function adaptServer(server: CfServer, apiIndex: number): AdaptedServer {
   const pingWindow = buildPingWindow(server)
   const ping: Record<string, NodeStatusPing> = {}
   for (const task of PING_TASKS) {
+    const hasCurrentFields = Object.hasOwn(server, task.latencyField) || Object.hasOwn(server, task.lossField)
     if (pingFieldPresent(server, task.latencyField) || pingFieldPresent(server, task.lossField)
-      || pingWindow?.some(point => point.lines?.[task.key]?.latency != null || point.lines?.[task.key]?.loss != null)) {
+      || (!hasCurrentFields && pingWindow?.some(point => point.lines?.[task.key]?.latency != null || point.lines?.[task.key]?.loss != null))) {
       ping[task.key] = pingEntry(
         pingTaskNames[task.key],
         server[task.latencyField],

@@ -190,7 +190,7 @@ bun run preview
 
 自定义域名和其他静态平台通常保留 `BASE_PATH=./` 即可。
 
-版本 `1.2.8.3` 沿用 `main` 源码分支和 `build` 产物分支。更新 `package.json` 版本并推送后，现有工作流会把构建结果发布到 `build`；按 CFSM 规范，产物根目录仅包含 `index.html` 和 `assets/`，国旗及系统图标由 CFSM 提供。
+版本 `1.2.8.4` 沿用 `main` 源码分支和 `build` 产物分支。更新 `package.json` 版本并推送后，现有工作流会把构建结果发布到 `build`；按 CFSM 规范，产物根目录仅包含 `index.html` 和 `assets/`，国旗及系统图标由 CFSM 提供。
 
 ### 主题开发文档：
 

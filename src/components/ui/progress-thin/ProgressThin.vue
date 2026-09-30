@@ -39,9 +39,9 @@ const statusClass = computed(() => {
     :style="heightStyle"
   >
     <div
-      class="h-full rounded-full transition-[width] duration-300 ease-out"
+      class="h-full w-full rounded-full transition-transform duration-300 ease-out"
       :class="statusClass"
-      :style="{ width: `${clamped}%` }"
+      :style="{ transform: `translateX(${clamped - 100}%)` }"
     />
   </div>
 </template>

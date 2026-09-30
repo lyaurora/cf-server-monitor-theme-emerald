@@ -93,10 +93,10 @@ export function formatOfflineTime(node: NodeData): string {
 /**
  * 获取价格标签列表
  */
-export function getPriceTags(node: NodeData, lang: 'zh-CN' | 'en-US'): PriceTagItem[] {
+export function getPriceTags(node: NodeData, lang: 'zh-CN' | 'en-US', now = Date.now()): PriceTagItem[] {
   const tags: PriceTagItem[] = []
-  const status = getExpireStatus(node.expired_at)
-  const remainingDays = formatRemainingDays(node.expired_at)
+  const status = getExpireStatus(node.expired_at, now)
+  const remainingDays = formatRemainingDays(node.expired_at, now)
   const priceText = formatPriceWithCycle(node.price, node.billing_cycle, node.currency, lang)
   if (hasConfiguredPrice(node))
     tags.push({ text: priceText })
@@ -110,10 +110,10 @@ export function getPriceTags(node: NodeData, lang: 'zh-CN' | 'en-US'): PriceTagI
 /**
  * 获取剩余时间标签的样式类
  */
-export function getRemainingTimeTagClass(node: NodeData): string {
+export function getRemainingTimeTagClass(node: NodeData, now = Date.now()): string {
   if (!hasConfiguredPrice(node))
     return ''
-  return getExpireTextClass(node.expired_at)
+  return getExpireTextClass(node.expired_at, now)
 }
 
 /**
