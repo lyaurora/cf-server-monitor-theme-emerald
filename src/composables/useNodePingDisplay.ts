@@ -147,33 +147,31 @@ export function useNodePingDisplay(
     const latest = line ? nodesStore.nodesByUuid.get(toValue(uuid))?.ping?.[line] : undefined
     return latest && Number.isFinite(latest.latest) && latest.latest >= 0 && latest.loss !== 100
       ? latest.latest
-      : pingStats.history.value.filter(point => point.latency !== null).at(-1)?.latency ?? null
+      : null
   })
 
   const latencyDisplay = computed(() => {
-    if (toValue(options.line))
+    const line = toValue(options.line)
+    const latest = line ? nodesStore.nodesByUuid.get(toValue(uuid))?.ping?.[line] : undefined
+    if (latest && (latest.latest < 0 || latest.loss === 100))
+      return '超时'
+    if (line)
       return latestLatency.value !== null ? `${Math.round(latestLatency.value)} ms` : '--'
-    if (pingStats.hasData.value)
-      return `${Math.round(pingStats.avgLatency.value)} ms`
-    if (pingStats.loading.value)
-      return options.loadingDisplayText ?? '加载中'
-    return options.emptyDisplayText ?? '-'
+    if (!pingStats.hasLatencyData.value)
+      return '--'
+    return `${Math.round(pingStats.avgLatency.value)} ms`
   })
 
   const lossDisplay = computed(() => {
-    if (toValue(options.line) && !pingStats.history.value.some(point => point.loss !== null))
+    if (!pingStats.hasLossData.value)
       return '--'
-    if (pingStats.hasData.value)
-      return `${pingStats.avgLoss.value.toFixed(1)}%`
-    if (pingStats.loading.value)
-      return options.loadingDisplayText ?? '加载中'
-    return options.emptyDisplayText ?? '-'
+    return `${pingStats.avgLoss.value.toFixed(1)}%`
   })
 
   const latencyPanelTooltip = computed(() => {
     if (toValue(options.line))
       return '最新延迟'
-    if (!pingStats.hasData.value) {
+    if (!pingStats.hasLatencyData.value) {
       if (pingStats.loading.value)
         return options.loadingPanelTooltipText?.latency ?? ''
       return options.emptyPanelTooltipText?.latency ?? ''
@@ -184,7 +182,7 @@ export function useNodePingDisplay(
   const lossPanelTooltip = computed(() => {
     if (toValue(options.line))
       return '平均丢包'
-    if (!pingStats.hasData.value) {
+    if (!pingStats.hasLossData.value) {
       if (pingStats.loading.value)
         return options.loadingPanelTooltipText?.loss ?? ''
       return options.emptyPanelTooltipText?.loss ?? ''

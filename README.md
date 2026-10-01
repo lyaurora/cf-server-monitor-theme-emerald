@@ -176,9 +176,13 @@ API_BASE=https://monitor.example.com
 BASE_PATH=./
 ```
 
-`API_BASE` 支持用英文逗号配置多个 Worker。开发模式会把同源 `/api` 请求代理到单个 `API_BASE`，避免本地 CORS 限制。
+本主题当前支持单个同源后端。`API_BASE` 只用于本地开发代理，请填写一个 Worker 的 origin，不要填写多个地址或附加路径；它不会被写入生产构建。开发模式会把同源 `/api` 请求代理到该 Worker，避免本地 CORS 限制。
 
-生产环境采用同源部署：由 Web 服务器（如 Nginx）托管 `dist/` 静态文件，并将 `/api`、`/flags`、`/os-icons` 和 `/api/ws` 反向代理到 CF Server Monitor Worker。
+## 安装
+
+在 CFSM 管理后台的主题商店中填写本仓库的 GitHub tree 地址，例如 `https://github.com/lyaurora/cf-server-monitor-theme-emerald/tree/build`。建议将 `build` 换成该产物分支的完整 commit SHA 固定版本；升级或回退时切换到对应 commit。CFSM 会代理主题的 `index.html` 和 `assets/`，无需另设 Web 服务器。
+
+如果自行托管 `dist/`，还需要反向代理 CFSM 的 API、WebSocket、默认静态资源及内置管理后台，确保它们与主题同源；仅上传 `dist/` 到静态托管平台不构成完整部署。
 
 ## 构建
 
@@ -188,14 +192,15 @@ bun run build
 bun run preview
 ```
 
+`bun run lint` 只检查；需要自动修复格式时使用 `bun run lint:fix`。
+
 自定义域名和其他静态平台通常保留 `BASE_PATH=./` 即可。
 
-版本 `1.2.8.4` 沿用 `main` 源码分支和 `build` 产物分支。更新 `package.json` 版本并推送后，现有工作流会把构建结果发布到 `build`；按 CFSM 规范，产物根目录仅包含 `index.html` 和 `assets/`，国旗及系统图标由 CFSM 提供。
+源码在 `main` 分支，产物在 `build` 分支。更新 `package.json` 版本并推送后，本仓工作流会检查并发布构建结果到 `build`；CFSM 主题版本选择依据产物分支的 Git commit，`package.json` 版本用于本仓发布标识和页脚显示。按 CFSM 规范，产物根目录仅包含 `index.html` 和 `assets/`，国旗及系统图标由 CFSM 提供。
 
 ### 主题开发文档：
 
 - [CF-Server-Monitor项目地址](https://github.com/huilang-me/CF-Server-Monitor)
-- [开发指南](https://github.com/huilang-me/CF-Server-Monitor/blob/main/develop.md)
 - [前端API文档](https://github.com/huilang-me/CF-Server-Monitor/blob/main/theme-develop.md)
 - [后端API文档](https://github.com/huilang-me/CF-Server-Monitor/blob/main/API.md)
 

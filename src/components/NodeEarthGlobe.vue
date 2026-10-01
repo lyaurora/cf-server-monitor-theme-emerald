@@ -7,6 +7,7 @@ import {
   useDocumentVisibility,
   useElementSize,
   useElementVisibility,
+  usePreferredReducedMotion,
   useRafFn,
 } from '@vueuse/core'
 import createGlobe from 'cobe'
@@ -32,8 +33,9 @@ const { width: containerWidth, height: containerHeight } = useElementSize(contai
 
 const documentVisibility = useDocumentVisibility()
 const elementVisible = useElementVisibility(containerRef)
+const reducedMotion = usePreferredReducedMotion()
 const shouldRender = computed(() => documentVisibility.value === 'visible' && elementVisible.value)
-const shouldAutoRotate = computed(() => appStore.earthViewMode !== 'earth-stop')
+const shouldAutoRotate = computed(() => appStore.earthViewMode !== 'earth-stop' && reducedMotion.value !== 'reduce')
 
 let globe: Globe | null = null
 const INITIAL_THETA = 0.22
@@ -133,11 +135,12 @@ const regionClusters = computed<RegionCluster[]>(() => {
   return Array.from(map.values()).sort((a, b) => b.servers - a.servers)
 })
 
+const displayNodeIds = computed(() => new Set(displayNodes.value.map(node => node.uuid)))
 const regionRates = computed<Map<string, RegionRate>>(() => {
   const map = new Map<string, RegionRate>()
-  // 始终使用 nodesStore.nodes 绕过 earthNodes 60s 节流，使速率实时更新
+  // 保留当前分组范围，同时从实时节点读取速率。
   for (const node of nodesStore.nodes) {
-    if (!node.online)
+    if (!node.online || !displayNodeIds.value.has(node.uuid))
       continue
     const code = getCountryCodeFromRegion(node.region)
     if (!code)
@@ -440,7 +443,7 @@ watch(
   },
 )
 
-watch(shouldRender, () => {
+watch([shouldRender, shouldAutoRotate], () => {
   if (!globe)
     return
   syncRafState()
@@ -462,7 +465,8 @@ function onPointerMove(e: PointerEvent) {
   lastPointerX = e.clientX
   lastPointerY = e.clientY
   targetPhi += deltaX / 200
-  targetTheta = clampTheta(targetTheta + deltaY / 300)
+  if (e.pointerType !== 'touch')
+    targetTheta = clampTheta(targetTheta + deltaY / 300)
 }
 function onPointerUp(e: PointerEvent) {
   isPointerDown = false
@@ -490,7 +494,7 @@ function formatRate(bytesPerSec: number): string {
   <div ref="containerRef" class="relative aspect-square w-full max-w-md mx-auto -translate-y-6 md:-translate-y-12">
     <canvas
       ref="canvasRef"
-      class="earth-globe-canvas absolute inset-0 w-full h-full select-none touch-none cursor-grab active:cursor-grabbing"
+      class="earth-globe-canvas absolute inset-0 w-full h-full select-none touch-pan-y touch-pinch-zoom cursor-grab active:cursor-grabbing"
       @pointerdown="onPointerDown" @pointermove="onPointerMove" @pointerup="onPointerUp" @pointercancel="onPointerUp"
     />
 
@@ -537,5 +541,11 @@ function formatRate(bytesPerSec: number): string {
 <style scoped>
 .earth-globe-canvas {
   contain: layout paint;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-pulse {
+    animation: none;
+  }
 }
 </style>

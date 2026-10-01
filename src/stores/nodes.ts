@@ -1,4 +1,4 @@
-import type { Client, NodeStatus, NodeStatusPing, PingWindowPoint } from '@/utils/rpc'
+import type { Client, NodeStatus, NodeStatusPing, PingSample, PingWindowPoint } from '@/utils/rpc'
 import { useNow } from '@vueuse/core'
 import { defineStore } from 'pinia'
 import { computed, ref, shallowReactive } from 'vue'
@@ -49,6 +49,9 @@ export interface NodeData {
   group: string
   tags: string
   hidden: boolean
+  showPrice: boolean
+  showExpire: boolean
+  showTraffic: boolean
   traffic_limit: number
   traffic_limit_type: TrafficLimitType
   created_at: string
@@ -76,6 +79,7 @@ export interface NodeData {
   connections_udp: number
   uptime: number
   ping?: Record<string, NodeStatusPing>
+  pingSample?: PingSample
 }
 
 /** WebSocket 连接状态 */
@@ -83,6 +87,8 @@ export type WsConnectionState = 'disconnected' | 'connecting' | 'connected' | 'r
 
 /** 状态数据（用于更新） */
 interface StatusData {
+  mem_total: number
+  disk_total: number
   swap_total: number | null
   online: boolean
   time: string
@@ -136,6 +142,8 @@ const useNodesStore = defineStore('nodes', () => {
   const pingNow = useNow({ interval: 60_000 })
   const wsConnectionState = ref<WsConnectionState>('disconnected')
   const wsReconnectAttempts = ref<number>(0)
+  const livePaused = ref(false)
+  const pageLoading = ref(false)
   const pingHistoryConfig = ref<PingHistoryConfig>({ ...PING_HISTORY_DEFAULTS })
   let lastEarthSnapshotAt = 0
 
@@ -207,6 +215,9 @@ const useNodesStore = defineStore('nodes', () => {
       group: client.group,
       tags: client.tags,
       hidden: client.hidden,
+      showPrice: client.showPrice,
+      showExpire: client.showExpire,
+      showTraffic: client.showTraffic,
       traffic_limit: client.traffic_limit,
       traffic_limit_type: client.traffic_limit_type as TrafficLimitType,
       created_at: client.created_at,
@@ -248,6 +259,8 @@ const useNodesStore = defineStore('nodes', () => {
       cpu: status.cpu,
       gpu: status.gpu,
       ram: status.ram,
+      mem_total: status.mem_total,
+      disk_total: status.disk_total,
       swap: status.swap,
       swap_total: status.swap_total,
       load: status.load,
@@ -274,6 +287,8 @@ const useNodesStore = defineStore('nodes', () => {
    */
   function extractStatusData(status: NodeStatus): StatusData {
     return {
+      mem_total: status.ram_total,
+      disk_total: status.disk_total,
       online: status.online,
       time: status.time,
       cpu: status.cpu,
@@ -327,11 +342,15 @@ const useNodesStore = defineStore('nodes', () => {
   /** 保留真实采样时间，避免把一分钟实测与数分钟窗口桶等权混算。 */
   function recordPingSample(uuid: string, status: NodeStatus): void {
     const sampleTime = Date.parse(status.time)
-    if (!Number.isFinite(sampleTime) || sampleTime < Date.now() - PING_HISTORY_WINDOW_MS)
+    if (!Number.isFinite(sampleTime) || sampleTime < Date.now() - PING_HISTORY_WINDOW_MS - pingHistoryBucketMs() * 4)
       return
     const entries = Object.entries(status.ping ?? {}).filter(([, entry]) => Number.isFinite(entry.latest) || Number.isFinite(entry.loss))
     if (!entries.length)
       return
+    const node = nodesByUuid.value.get(uuid)
+    // This feeds chart samples, including replay; current node state is guarded separately.
+    if (node)
+      node.pingSample = { time: status.time, ping: Object.fromEntries(entries) }
     const history = pingHistoryByUuid[uuid] ?? []
     const append = !history.length || sampleTime > history.at(-1)!.timeMs
     const lines = { ...(append ? undefined : history.find(item => item.time === status.time)?.lines) }
@@ -342,7 +361,7 @@ const useNodesStore = defineStore('nodes', () => {
         : previous?.latency ?? null
       const loss = Number.isFinite(entry.loss)
         ? entry.loss >= 0 && entry.loss <= 100 ? entry.loss : null
-        : entry.latest < 0 ? 100 : previous?.loss ?? null
+        : previous?.loss ?? null
       lines[key] = { latency: loss === 100 ? null : latency, loss }
     }
     const average = (metric: 'latency' | 'loss') => {
@@ -350,7 +369,7 @@ const useNodesStore = defineStore('nodes', () => {
       return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null
     }
     const point = { time: status.time, timeMs: sampleTime, latency: average('latency'), loss: average('loss'), lines }
-    const cutoff = Date.now() - PING_HISTORY_WINDOW_MS
+    const cutoff = Date.now() - PING_HISTORY_WINDOW_MS - pingHistoryBucketMs() * 4
     if (append) {
       let start = 0
       while (start < history.length && history[start]!.timeMs < cutoff)
@@ -378,10 +397,25 @@ const useNodesStore = defineStore('nodes', () => {
     lastEarthSnapshotAt = now
   }
 
+  /** CFSM uses a fixed five-minute reporting deadline, even when no new packet arrives. */
+  function refreshOnlineState(now = Date.now()): void {
+    let changed = false
+    for (const node of nodes.value) {
+      const lastReport = Date.parse(node.time)
+      const online = Number.isFinite(lastReport) && now - lastReport < 300_000
+      if (node.online !== online) {
+        node.online = online
+        changed = true
+      }
+    }
+    if (changed)
+      refreshEarthNodes(true)
+  }
+
   /**
    * 初始化节点数据（首次加载）
    */
-  function initNodes(clients: Record<string, Client>, statuses: Record<string, NodeStatus>): void {
+  function initNodes(clients: Record<string, Client>, statuses: Record<string, NodeStatus>, replace = true): void {
     const uuids = Object.keys(clients)
     const existingUuids = new Set(nodes.value.map(n => n.uuid))
 
@@ -414,7 +448,7 @@ const useNodesStore = defineStore('nodes', () => {
         // 开关开启且后端返回窗口时直接作为历史（已含最新桶），
         // 否则（开关关闭 / 窗口缺失）由实时样本按单条 ping 值逐步累积
         if (pingHistoryConfig.value.showThreeNetDetails && status.pingWindow?.length) {
-          const cutoff = Date.now() - PING_HISTORY_WINDOW_MS
+          const cutoff = Date.now() - PING_HISTORY_WINDOW_MS - pingHistoryBucketMs() * 4
           pingHistoryByUuid[uuid] = status.pingWindow
             .map(point => ({ ...point, timeMs: Date.parse(point.time) }))
             .filter(point => point.timeMs >= cutoff)
@@ -427,7 +461,8 @@ const useNodesStore = defineStore('nodes', () => {
     const newUuids = new Set(uuids)
     for (let i = nodes.value.length - 1; i >= 0; i--) {
       const node = nodes.value[i]
-      if (node && !newUuids.has(node.uuid)) {
+      if (replace && node && !newUuids.has(node.uuid)) {
+        delete pingHistoryByUuid[node.uuid]
         nodes.value.splice(i, 1)
       }
     }
@@ -487,6 +522,8 @@ const useNodesStore = defineStore('nodes', () => {
 
         const baseNode = createNodeFromClient(client)
         nodes.value[index] = updateNodeStatus(baseNode, {
+          mem_total: client.mem_total,
+          disk_total: client.disk_total,
           online: currentNode.online,
           time: currentNode.time,
           cpu: currentNode.cpu,
@@ -560,6 +597,8 @@ const useNodesStore = defineStore('nodes', () => {
     pingSampleIntervalMs,
     wsConnectionState,
     wsReconnectAttempts,
+    livePaused,
+    pageLoading,
     // 计算属性
     onlineCount,
     totalCount,
@@ -569,6 +608,7 @@ const useNodesStore = defineStore('nodes', () => {
     // 方法
     initNodes,
     updateNodeStatuses,
+    refreshOnlineState,
     recordPingSample,
     configurePingHistory,
     updateNodeClients,

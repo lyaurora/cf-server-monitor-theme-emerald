@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { nextTick, onMounted, onUnmounted, ref } from 'vue'
+import { onMounted, onUnmounted, ref } from 'vue'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Toaster } from '@/components/ui/sonner'
 import { useAppStore } from '@/stores/app'
+import { useNodesStore } from '@/stores/nodes'
 import { CorsError } from '@/utils/api'
-import { destroyInitManager, initApp } from '@/utils/init'
+import { destroyInitManager, initApp, resumeLiveUpdates } from '@/utils/init'
 import Background from './components/Background.vue'
 import Footer from './components/Footer.vue'
 import Header from './components/Header.vue'
@@ -13,16 +14,14 @@ import LoadingCover from './components/LoadingCover.vue'
 import Provider from './components/Provider.vue'
 
 const appStore = useAppStore()
+const nodesStore = useNodesStore()
 
-const isReady = ref(false)
 const corsDialogOpen = ref(false)
 const corsAllowedOrigin = ref('')
 
 onMounted(async () => {
   try {
     await initApp()
-    await nextTick()
-    isReady.value = true
   }
   catch (error) {
     console.error('[App] Initialization failed:', error)
@@ -30,9 +29,21 @@ onMounted(async () => {
       corsAllowedOrigin.value = error.origin
       corsDialogOpen.value = true
     }
-    isReady.value = true
   }
 })
+
+async function resumeConnection(): Promise<void> {
+  if (!appStore.publicSettings) {
+    window.location.reload()
+    return
+  }
+  try {
+    await resumeLiveUpdates()
+  }
+  catch (error) {
+    console.error('[App] Reconnect failed:', error)
+  }
+}
 
 onUnmounted(() => {
   destroyInitManager()
@@ -46,6 +57,16 @@ onUnmounted(() => {
     <Header />
     <main v-if="!appStore.loading" class="flex-1">
       <div class="max-w-[1280px] mx-auto">
+        <div
+          v-if="nodesStore.livePaused || appStore.connectionError || nodesStore.wsConnectionState === 'reconnecting'"
+          role="status" class="mx-4 mb-4 flex flex-wrap items-center gap-3 rounded-md bg-background/80 p-3 text-sm"
+        >
+          <span v-if="nodesStore.livePaused" class="flex-1">已达到设定的连接时长，实时更新已暂停。当前显示保留的数据。</span>
+          <span v-else class="flex-1">页面与监控服务的连接中断，数据可能已过期。此提示不代表机器离线。</span>
+          <Button size="sm" :disabled="nodesStore.pageLoading" @click="resumeConnection">
+            {{ nodesStore.livePaused ? '继续实时更新' : '重新连接' }}
+          </Button>
+        </div>
         <RouterView v-slot="{ Component }">
           <KeepAlive :include="['HomeView']">
             <component :is="Component" />

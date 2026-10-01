@@ -98,8 +98,10 @@ export function getPriceTags(node: NodeData, lang: 'zh-CN' | 'en-US', now = Date
   const status = getExpireStatus(node.expired_at, now)
   const remainingDays = formatRemainingDays(node.expired_at, now)
   const priceText = formatPriceWithCycle(node.price, node.billing_cycle, node.currency, lang)
-  if (hasConfiguredPrice(node))
+  if (node.showPrice !== false && hasConfiguredPrice(node))
     tags.push({ text: priceText })
+  if (node.showExpire === false)
+    return tags
   if (status === 'long_term')
     tags.push({ text: lang === 'zh-CN' ? '长期' : 'Long-term' })
   else

@@ -34,6 +34,9 @@ export interface Client {
   group: string
   tags: string
   hidden: boolean
+  showPrice: boolean
+  showExpire: boolean
+  showTraffic: boolean
   traffic_limit: number
   traffic_limit_type: string
   created_at: string
@@ -48,6 +51,12 @@ export interface NodeStatusPing {
   loss: number
   min: number
   max: number
+}
+
+/** Only probe fields carried by one real sample, before current-state merging. */
+export interface PingSample {
+  time: string
+  ping: Record<string, NodeStatusPing>
 }
 
 export interface PingLinePoint {
@@ -90,7 +99,7 @@ export interface NodeStatus {
   online: boolean
   uptime: number
   ping?: Record<string, NodeStatusPing>
-  /** /api/servers 返回的一小时延迟窗口（30 桶，旧→新），由适配器聚合生成 */
+  /** /api/servers 返回的真实采样窗口（旧→新），保留各线路和时间戳。 */
   pingWindow?: PingWindowPoint[]
 }
 

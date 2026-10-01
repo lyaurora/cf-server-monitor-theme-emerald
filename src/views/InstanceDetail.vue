@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { CurrencyCode } from '@/utils/financeHelper'
 import { Icon } from '@iconify/vue'
-import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -13,7 +13,6 @@ import { useNodesStore } from '@/stores/nodes'
 import { getApiAssetUrl } from '@/utils/api'
 import * as financeHelper from '@/utils/financeHelper'
 import { formatBytesPerSecondWithConfig, formatBytesWithConfig, formatDateTime, formatUptimeWithFormat } from '@/utils/helper'
-import { subscribeNodeLive } from '@/utils/init'
 import { getTrafficUsed, getTrafficUsedPercentage, showTrafficProgress } from '@/utils/nodeHelper'
 import { getOSImage, getOSName } from '@/utils/osImageHelper'
 import { getRegionCode, getRegionDisplayName } from '@/utils/regionHelper'
@@ -49,31 +48,13 @@ const nodesStore = useNodesStore()
 const exchangeRates = ref(financeHelper.DEFAULT_EXCHANGE_RATES)
 const financeBaseCurrency = ref<CurrencyCode>('CNY')
 
-let unsubscribeLive: (() => void) | null = null
-
-function subscribeDetailLive(): void {
-  unsubscribeLive?.()
-  unsubscribeLive = null
-  const uuid = String(route.params.id ?? '')
-  if (uuid)
-    unsubscribeLive = subscribeNodeLive(uuid)
-}
-
 onMounted(async () => {
   window.scrollTo({ top: 0, behavior: 'instant' })
   financeBaseCurrency.value = financeHelper.getStoredFinanceCurrency()
-  subscribeDetailLive()
 
   const { rates } = await financeHelper.getDailyExchangeRates()
   exchangeRates.value = rates
 })
-
-onBeforeUnmount(() => {
-  unsubscribeLive?.()
-  unsubscribeLive = null
-})
-
-watch(() => route.params.id, subscribeDetailLive)
 
 const formatBytes = (bytes: number) => formatBytesWithConfig(bytes, appStore.byteDecimals)
 const formatBytesPerSecond = (bytes: number) => formatBytesPerSecondWithConfig(bytes, appStore.byteDecimals)
@@ -93,6 +74,7 @@ interface MetricCard {
   unit?: string
   icon: string
   valueClass?: string
+  visible: boolean
 }
 
 const EXPIRES_IN_SUFFIX_REGEX = /^(\d+)\s*(天|days?)$/i
@@ -194,18 +176,21 @@ const metricCards = computed<MetricCard[]>(() => {
 
   return [
     {
+      visible: data.value.showPrice !== false,
       label: '节点价格',
       value: nodePrice.value,
       unit: nodePrice.unit,
       icon: 'tabler:cash',
     },
     {
+      visible: data.value.showPrice !== false,
       label: '月均支出',
       value: monthlyAverageCost.value,
       unit: monthlyAverageCost.unit,
       icon: 'tabler:receipt-2',
     },
     {
+      visible: data.value.showExpire !== false,
       label: '剩余时间',
       value: remainingTime.value,
       unit: remainingTime.unit,
@@ -213,12 +198,13 @@ const metricCards = computed<MetricCard[]>(() => {
       valueClass: remainingTimeValueClass.value,
     },
     {
+      visible: data.value.showPrice !== false && data.value.showExpire !== false,
       label: '剩余价值',
       value: remainingValue.value,
       unit: remainingValue.unit,
       icon: 'tabler:coins',
     },
-  ]
+  ].filter(item => item.visible)
 })
 
 const gpuInfoList = computed(() => parseGpuInfo(data.value?.gpu_info))
@@ -275,7 +261,10 @@ const trafficProgressStyle = computed(() => ({
 
 <template>
   <div class="instance-detail space-y-4">
-    <div v-if="!data" class="p-4">
+    <div v-if="!data && nodesStore.pageLoading" class="p-4" role="status">
+      正在加载节点…
+    </div>
+    <div v-else-if="!data" class="p-4">
       <CardX
         class="border-none transition-all rounded-md"
         :class="pickSurfaceClass('bg-background/60 hover:bg-background', 'bg-background/50 hover:bg-background backdrop-blur-xs')"
@@ -290,9 +279,9 @@ const trafficProgressStyle = computed(() => ({
       </CardX>
     </div>
 
-    <template v-else>
+    <template v-else-if="data">
       <div class="px-4 flex gap-4 items-center">
-        <Button variant="ghost" size="icon-sm" class="bg-background/50 hover:bg-background" @click="router.push('/')">
+        <Button aria-label="返回首页" variant="ghost" size="icon-sm" class="bg-background/50 hover:bg-background" @click="router.push('/')">
           <Icon icon="tabler:arrow-left" :width="16" :height="16" />
         </Button>
         <div class="text-lg font-bold flex gap-2 items-center">
@@ -307,7 +296,7 @@ const trafficProgressStyle = computed(() => ({
         </Badge>
       </div>
 
-      <div class="px-4 grid grid-cols-2 gap-4 lg:grid-cols-4">
+      <div v-if="metricCards.length" class="px-4 grid grid-cols-2 gap-4 lg:grid-cols-4">
         <CardX
           v-for="item in metricCards" :key="item.label" hoverable size="small"
           class="group h-full border-none transition-all rounded-md"
@@ -410,7 +399,7 @@ const trafficProgressStyle = computed(() => ({
           content-class="pt-0"
         >
           <div class="gap-3 grid grid-cols-2">
-            <div class="relative min-w-0 overflow-hidden rounded-sm bg-slate-500/5 p-2">
+            <div v-if="data.showTraffic !== false" class="relative min-w-0 overflow-hidden rounded-sm bg-slate-500/5 p-2">
               <div
                 v-if="hasTrafficLimit"
                 class="absolute inset-y-0 left-0 rounded-sm bg-primary/10 pointer-events-none transition-[width] duration-300 ease-out"

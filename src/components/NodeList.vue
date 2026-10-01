@@ -2,6 +2,7 @@
 import type { NodeData } from '@/stores/nodes'
 import { Icon } from '@iconify/vue'
 import { computed, ref } from 'vue'
+import { RouterLink } from 'vue-router'
 import NodePingListCell from '@/components/NodePingListCell.vue'
 import TrafficProgress from '@/components/TrafficProgress.vue'
 import { Badge } from '@/components/ui/badge'
@@ -55,6 +56,7 @@ const columns: ColumnConfig[] = [
 
 const sortKey = ref<string>('')
 const sortDir = ref<1 | -1>(1)
+const visibleColumns = computed(() => columns.filter(col => col.key !== 'traffic' || props.nodes.some(node => node.showTraffic !== false)))
 
 function handleSort(col: ColumnConfig) {
   if (!col.sortable)
@@ -102,14 +104,14 @@ const sortedNodes = computed(() => {
   })
 })
 
-const formatBytes = (bytes: number) => formatBytesWithConfig(bytes)
-const formatBytesPerSecond = (bytes: number) => formatBytesPerSecondWithConfig(bytes)
+const formatBytes = (bytes: number) => formatBytesWithConfig(bytes, appStore.byteDecimals)
+const formatBytesPerSecond = (bytes: number) => formatBytesPerSecondWithConfig(bytes, appStore.byteDecimals)
 const formatUptime = (seconds: number) => formatUptimeWithFormat(seconds, 'hour')
 
-const columnKeys = computed(() => columns.map(c => c.key))
+const columnKeys = computed(() => visibleColumns.value.map(c => c.key))
 
 const gridStyle = computed(() => ({
-  gridTemplateColumns: columns.map(c => c.width).join(' '),
+  gridTemplateColumns: visibleColumns.value.map(c => c.width).join(' '),
 }))
 
 const offlineOverlayContentStyle = computed(() => {
@@ -158,13 +160,17 @@ function getRowTransitionStyle(index: number): Record<string, string> {
         :style="gridStyle"
       >
         <div
-          v-for="col in columns" :key="col.key"
-          :class="[col.sortable ? 'cursor-pointer' : '', ['status', 'os'].includes(col.key) ? 'text-center' : 'text-left']"
-          @click="handleSort(col)"
+          v-for="col in visibleColumns" :key="col.key"
+          :class="['status', 'os'].includes(col.key) ? 'text-center' : 'text-left'"
         >
-          <span class="text-xs text-muted-foreground">
+          <button
+            v-if="col.sortable" type="button" class="rounded-sm text-xs text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            :aria-label="`按${col.label}排序${sortKey === col.key ? (sortDir === 1 ? '，当前升序' : '，当前降序') : ''}`"
+            @click="handleSort(col)"
+          >
             {{ col.label }}{{ col.sortable && sortKey === col.key ? (sortDir === 1 ? ' ↑' : ' ↓') : '' }}
-          </span>
+          </button>
+          <span v-else class="text-xs text-muted-foreground">{{ col.label }}</span>
         </div>
       </div>
 
@@ -184,7 +190,7 @@ function getRowTransitionStyle(index: number): Record<string, string> {
           @click="handleClick(node)"
         >
           <div class="grid gap-2 items-center" :style="gridStyle">
-            <template v-for="col in columns" :key="col.key">
+            <template v-for="col in visibleColumns" :key="col.key">
               <!-- 在线状态指示器 -->
               <div v-if="col.key === 'status'" class="flex justify-center">
                 <div class="size-2 rounded-full relative" :class="[node.online ? 'bg-emerald-600' : 'bg-red-600']">
@@ -202,7 +208,15 @@ function getRowTransitionStyle(index: number): Record<string, string> {
                     v-if="hasRegion(node.region)" :src="getFlagSrc(node.region, node.source_index)"
                     :alt="getRegionDisplayName(node.region)" class="size-5 rounded-sm drop-shadow-[0_0_2px_rgba(0,0,0,0.1)]"
                   >
-                  <span class="truncate">{{ node.name }}</span>
+                  <RouterLink
+                    v-if="node.online"
+                    :to="{ name: 'instance-detail', params: { id: node.uuid }, query: node.source_index === undefined ? undefined : { apiIndex: node.source_index } }"
+                    class="truncate rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    :aria-label="`${node.name}，在线，查看详情`" @click.stop
+                  >
+                    {{ node.name }}
+                  </RouterLink>
+                  <span v-else class="truncate">{{ node.name }}</span>
                 </div>
                 <div v-if="node.uptime" class="text-[11px] text-muted-foreground/70 truncate">
                   {{ formatUptime(node.uptime ?? 0) }}
@@ -259,7 +273,7 @@ function getRowTransitionStyle(index: number): Record<string, string> {
                     <span class="inline group-hover:hidden">
                       {{ (node.cpu ?? 0).toFixed(1) }}%
                     </span>
-                    <span class="hidden group-hover:inline">
+                    <span class="hidden group-hover:inline [@media(hover:none)]:block">
                       {{ node.load.toFixed(2) ?? 0 }}, {{ node.load5.toFixed(2) ?? 0 }}, {{ node.load15.toFixed(2) ?? 0
                       }}
                     </span>
@@ -276,7 +290,7 @@ function getRowTransitionStyle(index: number): Record<string, string> {
                       <span class="inline group-hover:hidden">
                         {{ ((node.ram ?? 0) / (node.mem_total || 1) * 100).toFixed(1) }}%
                       </span>
-                      <span class="hidden group-hover:inline">
+                      <span class="hidden group-hover:inline [@media(hover:none)]:block">
                         {{ formatBytes(node.ram ?? 0) }} / {{ formatBytes(node.mem_total ?? 0) }}
                       </span>
                     </div>
@@ -301,7 +315,7 @@ function getRowTransitionStyle(index: number): Record<string, string> {
                     <span class="inline group-hover:hidden">
                       {{ ((node.disk ?? 0) / (node.disk_total || 1) * 100).toFixed(1) }}%
                     </span>
-                    <span class="hidden group-hover:inline">
+                    <span class="hidden group-hover:inline [@media(hover:none)]:block">
                       {{ formatBytes(node.disk ?? 0) }} / {{ formatBytes(node.disk_total ?? 0) }}
                     </span>
                   </div>
@@ -314,13 +328,13 @@ function getRowTransitionStyle(index: number): Record<string, string> {
 
               <!-- 流量 -->
               <div v-else-if="col.key === 'traffic'" class="group">
-                <DataTooltip placement="top" class="flex items-center gap-2" content-class="mb-1.5">
+                <DataTooltip v-if="node.showTraffic !== false" placement="top" class="flex items-center gap-2" content-class="mb-1.5">
                   <div class="space-y-1 w-full">
                     <div class="text-[10px] text-muted-foreground truncate">
                       <span class="inline group-hover:hidden">
                         {{ getTrafficUsedPercentage(node).toFixed(1) }}%
                       </span>
-                      <span class="hidden group-hover:inline">
+                      <span class="hidden group-hover:inline [@media(hover:none)]:block">
                         {{ formatBytes(getTrafficUsed(node)) }} /
                         <template v-if="showTrafficProgress(node)">{{ formatBytes(node.traffic_limit) }}</template>
                         <template v-else>∞</template>
@@ -363,13 +377,16 @@ function getRowTransitionStyle(index: number): Record<string, string> {
 
           <div
             v-if="!node.online" class="absolute inset-0 z-2 p-2 bg-background/10 rounded-lg flex items-center"
-            aria-hidden="true"
           >
             <div class="grid gap-2 items-center justify-center" :style="gridStyle">
               <div class="h-full space-y-1" :style="offlineOverlayContentStyle">
-                <div class="text-sm font-semibold truncate">
+                <RouterLink
+                  :to="{ name: 'instance-detail', params: { id: node.uuid }, query: node.source_index === undefined ? undefined : { apiIndex: node.source_index } }"
+                  class="block truncate rounded-sm text-sm font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  :aria-label="`${node.name}，离线，查看详情`" @click.stop
+                >
                   <span class="text-red-500">离线</span> {{ node.name }}
-                </div>
+                </RouterLink>
                 <div class="text-xs text-muted-foreground">
                   {{ formatOfflineTime(node) }}
                 </div>
@@ -412,6 +429,10 @@ function getRowTransitionStyle(index: number): Record<string, string> {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .animate-ping {
+    animation: none;
+  }
+
   .node-row-switch-enter-active,
   .node-row-switch-leave-active,
   .node-row-switch-move {

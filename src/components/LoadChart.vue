@@ -3,7 +3,7 @@ import type { RecordFormat } from '@/utils/recordHelper'
 import type { StatusRecord } from '@/utils/rpc'
 import { Icon } from '@iconify/vue'
 import dayjs from 'dayjs'
-import { computed, onMounted, ref, shallowRef, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import VChart from 'vue-echarts'
 import { CardX } from '@/components/ui/card-x'
 import { Empty } from '@/components/ui/empty'
@@ -114,6 +114,7 @@ const remoteData = shallowRef<StatusRecord[]>([])
 const loading = ref(false)
 const isInitialLoad = ref(true) // 是否为首次加载（用于控制实时模式下的 NSpin 显示）
 const error = ref<string | null>(null)
+let fetchRequestId = 0
 
 // 节点信息
 const nodeInfo = computed(() => nodesStore.nodesByUuid.get(props.uuid))
@@ -159,32 +160,6 @@ function trimToSelectedWindow(records: StatusRecord[]): StatusRecord[] {
   return records.filter(record => dayjs(record.time).valueOf() >= cutoff)
 }
 
-async function fetchRecentData() {
-  if (!props.uuid)
-    return
-
-  // 只在首次加载时显示 loading
-  if (isInitialLoad.value) {
-    loading.value = true
-  }
-  error.value = null
-
-  try {
-    const result = await rpc.getNodeRecentStatus(props.uuid)
-    const records = result?.records || []
-    records.sort((a, b) => dayjs(a.time).valueOf() - dayjs(b.time).valueOf())
-    remoteData.value = trimToSelectedWindow(records)
-  }
-  catch (err) {
-    error.value = err instanceof Error ? err.message : '获取数据失败'
-    remoteData.value = []
-  }
-  finally {
-    loading.value = false
-    isInitialLoad.value = false
-  }
-}
-
 function nodeToStatusRecord(node: NonNullable<typeof nodeInfo.value>): StatusRecord {
   return {
     client: node.uuid,
@@ -226,41 +201,45 @@ function appendRealtimeStatus(node: NonNullable<typeof nodeInfo.value>): void {
   remoteData.value = trimToSelectedWindow([...remoteData.value, next])
 }
 
-async function fetchHistoryData() {
+async function fetchData() {
   if (!props.uuid)
     return
 
-  const hours = selectedHours.value || 4
-
-  loading.value = true
+  const requestId = ++fetchRequestId
+  const uuid = props.uuid
+  const hours = selectedHours.value
+  const realtime = isRealtime.value
+  const previousRecords = new Set(remoteData.value)
+  if (!realtime || isInitialLoad.value)
+    loading.value = true
   error.value = null
 
   try {
-    const result = await rpc.getLoadRecords(props.uuid, hours)
-    const records = result.records || []
+    const result = realtime
+      ? await rpc.getNodeRecentStatus(uuid)
+      : await rpc.getLoadRecords(uuid, hours)
+    if (requestId !== fetchRequestId)
+      return
 
-    // 按时间排序
-    records.sort((a: StatusRecord, b: StatusRecord) =>
+    const liveRecords = realtime ? remoteData.value.filter(record => !previousRecords.has(record)) : []
+    const records = [...new Map([...(result.records || []), ...liveRecords].map(record => [record.time, record])).values()]
+    records.sort((a, b) =>
       dayjs(a.time).valueOf() - dayjs(b.time).valueOf(),
     )
 
-    remoteData.value = records
+    remoteData.value = trimToSelectedWindow(records)
   }
   catch (err) {
+    if (requestId !== fetchRequestId)
+      return
     error.value = err instanceof Error ? err.message : '获取数据失败'
     remoteData.value = []
   }
   finally {
-    loading.value = false
-  }
-}
-
-async function fetchData() {
-  if (isRealtime.value) {
-    await fetchRecentData()
-  }
-  else {
-    await fetchHistoryData()
+    if (requestId === fetchRequestId) {
+      loading.value = false
+      isInitialLoad.value = false
+    }
   }
 }
 
@@ -824,6 +803,8 @@ watch(() => props.uuid, () => {
 onMounted(() => {
   fetchData()
 })
+
+onBeforeUnmount(() => fetchRequestId++)
 </script>
 
 <template>

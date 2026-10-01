@@ -9,5 +9,5 @@
 - `utils/rpc.ts` exists only as an adapter for chart code inherited from Emerald.
 - Use existing reka-ui wrappers under `components/ui/` and Tailwind utilities.
 - Use `publicAsset()` for public files so subpath deployments keep working.
-- Do not add Cobe, Naive UI, UnoCSS, SCSS, or browser-history routing.
+- Preserve the existing Cobe Earth and map display modes. Do not add Naive UI, UnoCSS, SCSS, or browser-history routing.
 - Validate with `bun run lint` and `bun run build`.

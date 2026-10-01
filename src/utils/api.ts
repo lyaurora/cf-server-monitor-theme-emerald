@@ -95,11 +95,12 @@ export interface SiteConfig {
   turnstile_enabled: boolean | string
   turnstile_login_enabled?: boolean | string
   turnstile_site_key?: string
+  frontend_ws_timeout_minutes?: number
   site_title?: string
   verified?: boolean
   turnstile_verified?: string | null
   theme_options?: unknown
-  /** 一小时延迟窗口配置（points=输出桶数，hours=窗口时长），前端据此对齐首页 ping/loss 数据粒度 */
+  /** 延迟窗口配置：points 是最多真实点数，hours 是回看时长，不保证等间隔。 */
   latency_window?: {
     points?: number
     hours?: number
@@ -117,15 +118,16 @@ export interface SiteConfig {
 }
 
 export interface SysConfig {
+  long_history_points?: number
   show_price?: boolean
   show_expire?: boolean
   show_tf?: boolean
   show_time?: boolean
-  /** 后端开关：是否在 /api/servers 输出 ping/loss 一小时窗口；关闭时主题回退到单条 ping 数据 */
+  /** 后端开关：是否在 /api/servers 输出 ping/loss 窗口；关闭时隐藏首页小图。 */
   show_three_net_details?: boolean
 }
 
-/** 一小时延迟窗口中的单个点（2 分钟桶；ct/cu/cm/bd 为探测节点值，false=探测禁用，null=无数据） */
+/** 真实时间的窗口采样点；false=未配置/未采样，RTT null=超时，loss null=无丢包样本。 */
 export interface LatencyWindowPoint {
   ts?: number | string
   ct?: number | string | boolean | null
@@ -165,23 +167,23 @@ export interface CfServer {
   processes?: number | string
   tcp_conn?: number | string
   udp_conn?: number | string
-  ping_ct?: number | string | null
-  ping_cu?: number | string | null
-  ping_cm?: number | string | null
-  ping_bd?: number | string | null
-  loss_ct?: number | string | null
-  loss_cu?: number | string | null
-  loss_cm?: number | string | null
-  loss_bd?: number | string | null
-  ping_node_1?: number | string | null
-  ping_node_2?: number | string | null
-  ping_node_3?: number | string | null
-  ping_node_4?: number | string | null
-  loss_node_1?: number | string | null
-  loss_node_2?: number | string | null
-  loss_node_3?: number | string | null
-  loss_node_4?: number | string | null
-  /** 一小时延迟窗口（旧→新，桶数与区间由 /api/config 的 latency_window 决定），仅 /api/servers 列表返回 */
+  ping_ct?: number | string | false | null
+  ping_cu?: number | string | false | null
+  ping_cm?: number | string | false | null
+  ping_bd?: number | string | false | null
+  loss_ct?: number | string | false | null
+  loss_cu?: number | string | false | null
+  loss_cm?: number | string | false | null
+  loss_bd?: number | string | false | null
+  ping_node_1?: number | string | false | null
+  ping_node_2?: number | string | false | null
+  ping_node_3?: number | string | false | null
+  ping_node_4?: number | string | false | null
+  loss_node_1?: number | string | false | null
+  loss_node_2?: number | string | false | null
+  loss_node_3?: number | string | false | null
+  loss_node_4?: number | string | false | null
+  /** 延迟窗口（旧→新，最多点数与时长由 latency_window 决定），仅 /api/servers 列表返回。 */
   ping?: LatencyWindowPoint[]
   loss?: LatencyWindowPoint[]
   ram_total?: number | string
@@ -205,12 +207,15 @@ export interface CfServer {
   last_updated?: number | string
   timestamp?: number | string
   is_online?: boolean
+  sysConfig?: SysConfig
+  latestReportUpdates?: LatestReportUpdate[]
 }
 
 export interface LatestReportSample {
   ts?: number | string
   payload?: Record<string, unknown>
   data?: Record<string, unknown>
+  metrics?: Record<string, unknown>
 }
 
 export interface LatestReportUpdate {
@@ -325,6 +330,7 @@ export class CorsError extends ApiError {
 }
 
 const sourceRegistry = new Map<string, ServerSource>()
+const cachedSysConfigs = new Map<number, SysConfig>()
 let cachedSiteConfigs: SiteConfig[] = []
 
 type PingProviderKey = 'ct' | 'cu' | 'cm' | 'bd'
@@ -1023,8 +1029,9 @@ function trafficLimitType(value: unknown): string {
 }
 
 function pingEntry(name: string, latency: unknown, loss: unknown): NodeStatusPing {
-  const latest = nullableNumber(latency) ?? Number.NaN
   const lossValue = nullableNumber(loss) ?? Number.NaN
+  // Keep explicit timeouts distinct from absent/disabled probe fields.
+  const latest = latency === null || lossValue === 100 ? -1 : nullableNumber(latency) ?? Number.NaN
   return { name, latest, avg: latest, tail: latest, loss: lossValue, min: latest, max: latest }
 }
 
@@ -1047,14 +1054,10 @@ const PING_TASKS: PingTaskDefinition[] = [
 ]
 
 /**
- * 探测字段是否“存在可用值”。兼容后端省略键、null、""、false、非数字占位；
- * 数值 0 视为存在（丢包 0% 合法）。两端 ping/loss 皆不存在时不展示对应任务。
+ * null 是明确超时；false/缺失才是未配置或未取样。数值 0 保持有效。
  */
 function isPingFieldPresent(value: unknown): boolean {
-  if (value === undefined || value === null || value === '' || value === false)
-    return false
-  const number = Number.parseFloat(String(value))
-  return Number.isFinite(number)
+  return value === null || nullableNumber(value) !== null
 }
 
 function pingFieldPresent(server: CfServer, field: keyof CfServer): boolean {
@@ -1147,7 +1150,7 @@ function buildPingWindow(server: CfServer): PingWindowPoint[] | undefined {
   return points.length ? points : undefined
 }
 
-export function adaptServer(server: CfServer, apiIndex: number): AdaptedServer {
+export function adaptServer(server: CfServer, apiIndex: number, sysConfig: SysConfig | undefined = server.sysConfig): AdaptedServer {
   const wire = server as unknown as Record<string, unknown>
   const uuid = getDisplayUuid(apiIndex, server.id)
   const baseUrl = getApiBases()[apiIndex] ?? ''
@@ -1158,7 +1161,7 @@ export function adaptServer(server: CfServer, apiIndex: number): AdaptedServer {
   const load = String(server.load_avg ?? '').split(WHITESPACE_REGEX).map(finiteNumber)
   const now = Date.now()
   const bootTime = timestamp(server.boot_time, 0)
-  const online = server.is_online ?? (updatedAt > 0 && now - updatedAt < ONLINE_THRESHOLD_MS)
+  const online = updatedAt > 0 && now - updatedAt < ONLINE_THRESHOLD_MS
   const pingWindow = buildPingWindow(server)
   const ping: Record<string, NodeStatusPing> = {}
   for (const task of PING_TASKS) {
@@ -1206,6 +1209,9 @@ export function adaptServer(server: CfServer, apiIndex: number): AdaptedServer {
       group: server.server_group || '默认分组',
       tags: server.tags || '',
       hidden: false,
+      showPrice: sysConfig?.show_price === undefined || enabled(sysConfig.show_price),
+      showExpire: sysConfig?.show_expire === undefined || enabled(sysConfig.show_expire),
+      showTraffic: sysConfig?.show_tf === undefined || enabled(sysConfig.show_tf),
       traffic_limit: parseTrafficLimit(server.traffic_limit),
       traffic_limit_type: trafficLimitType(server.traffic_calc_type),
       created_at: '',
@@ -1256,8 +1262,10 @@ export async function fetchAllServers(): Promise<{
   const statuses: Record<string, NodeStatus> = {}
   const latestReportUpdates: Array<{ apiIndex: number, updates: LatestReportUpdate[] }> = []
   responses.forEach((response, apiIndex) => {
+    if (response.sysConfig)
+      cachedSysConfigs.set(apiIndex, response.sysConfig)
     for (const server of response.servers ?? []) {
-      const adapted = adaptServer(server, apiIndex)
+      const adapted = adaptServer(server, apiIndex, response.sysConfig)
       clients[adapted.client.uuid] = adapted.client
       statuses[adapted.client.uuid] = adapted.status
     }
@@ -1312,7 +1320,7 @@ export async function fetchHistory(uuid: string, hours = 1): Promise<StatusRecor
 
 export async function fetchPingHistory(uuid: string, hours = 1): Promise<{
   records: PingRecord[]
-  tasks: Array<{ id: number, key: PingTaskKey, name: string, interval: number, loss: number }>
+  tasks: Array<{ id: number, key: PingTaskKey, name: string, interval: number, loss?: number }>
 }> {
   const source = getServerSource(uuid)
   const rows = await request<HistoryRow[]>(`/api/history/all?id=${encodeURIComponent(source.serverId)}&hours=${hours}`, source.apiIndex)
@@ -1327,21 +1335,21 @@ export async function fetchPingHistory(uuid: string, hours = 1): Promise<{
       const lossRaw = row[task.lossField]
       const hasLatency = isPingFieldPresent(latencyValue)
       const hasLoss = isPingFieldPresent(lossRaw)
-      // 与 adaptServer 一致：ping_x / loss_x 皆不存在（含 null/""/false/非数字）则跳过
+      // 保留 null 超时；两端均为 false/缺失时不生成记录。
       if (!hasLatency && !hasLoss)
         continue
 
       availableTasks.add(task.id)
-      const lossValue = hasLoss ? finiteNumber(lossRaw) : 0
-      const latency = hasLatency ? finiteNumber(latencyValue) : 0
+      const lossValue = nullableNumber(lossRaw) ?? undefined
+      const latency = nullableNumber(latencyValue)
       records.push({
         client: uuid,
         task_id: task.id,
         time,
-        value: lossValue >= 100 || latency <= 0 ? -1 : latency,
+        value: lossValue === 100 || latencyValue === null ? -1 : latency ?? Number.NaN,
         loss: lossValue,
       })
-      if (hasLoss) {
+      if (lossValue !== undefined) {
         const taskLosses = losses.get(task.id) ?? []
         taskLosses.push(lossValue)
         losses.set(task.id, taskLosses)
@@ -1356,14 +1364,17 @@ export async function fetchPingHistory(uuid: string, hours = 1): Promise<{
       key: task.key,
       name: pingTaskNames[task.key],
       interval: 60,
-      loss: (losses.get(task.id) ?? []).reduce((sum, value) => sum + value, 0) / Math.max(1, losses.get(task.id)?.length ?? 0),
+      loss: losses.has(task.id)
+        ? losses.get(task.id)!.reduce((sum, value) => sum + value, 0) / losses.get(task.id)!.length
+        : undefined,
     })),
   }
 }
 
 export async function fetchServer(uuid: string): Promise<CfServer> {
   const source = getServerSource(uuid)
-  return request<CfServer>(`/api/server?id=${encodeURIComponent(source.serverId)}`, source.apiIndex)
+  const server = await request<CfServer>(`/api/server?id=${encodeURIComponent(source.serverId)}`, source.apiIndex)
+  return { ...server, sysConfig: { ...cachedSysConfigs.get(source.apiIndex), ...server.sysConfig } }
 }
 
 export function buildAdminUrl(): string {

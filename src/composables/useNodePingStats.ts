@@ -13,6 +13,8 @@ export interface NodePingStatsState {
   avgLoss: number
   avgVolatility: number
   history: NodePingHistoryPoint[]
+  hasLatencyData: boolean
+  hasLossData: boolean
   hasData: boolean
 }
 
@@ -52,7 +54,8 @@ export function useNodePingStats(
     const points: NodePingHistoryPoint[] = []
     let previous: NodePingHistoryPoint | undefined
     for (const point of nodesStore.pingHistoryByUuid[toValue(uuid)] ?? []) {
-      if (!(point.timeMs >= cutoff && point.timeMs <= latest))
+      // A real point just before the window can still cover its left edge.
+      if (!(point.timeMs >= cutoff - maxGap && point.timeMs <= latest))
         continue
       if (!line) {
         points.push(point)
@@ -78,14 +81,17 @@ export function useNodePingStats(
     const points = history.value
     // Match the last history bar by including samples from the current millisecond.
     const now = Date.now() + 1
-    const avgLatency = pingAverage(points, 'latency', now, nodesStore.pingSampleIntervalMs)
-    const avgLoss = pingAverage(points, 'loss', now, nodesStore.pingSampleIntervalMs)
+    const start = now - PING_HISTORY_WINDOW_MS
+    const avgLatency = pingAverage(points, 'latency', now, nodesStore.pingSampleIntervalMs, start)
+    const avgLoss = pingAverage(points, 'loss', now, nodesStore.pingSampleIntervalMs, start)
 
     return {
       avgLatency: avgLatency ?? 0,
       avgLoss: avgLoss ?? 0,
       avgVolatility: 0,
       history: points,
+      hasLatencyData: avgLatency !== null,
+      hasLossData: avgLoss !== null,
       hasData: avgLatency !== null || avgLoss !== null,
     }
   })
@@ -98,6 +104,8 @@ export function useNodePingStats(
     avgLatency: computed(() => stats.value.avgLatency),
     avgLoss: computed(() => stats.value.avgLoss),
     avgVolatility: computed(() => stats.value.avgVolatility),
+    hasLatencyData: computed(() => stats.value.hasLatencyData),
+    hasLossData: computed(() => stats.value.hasLossData),
     hasData: computed(() => stats.value.hasData),
   }
 }

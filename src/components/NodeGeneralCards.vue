@@ -2,7 +2,7 @@
 import type { NodeData } from '@/stores/nodes'
 import type { CurrencyCode } from '@/utils/financeHelper'
 import { Icon } from '@iconify/vue'
-import { computed, defineAsyncComponent, onMounted, ref } from 'vue'
+import { computed, defineAsyncComponent, onMounted, ref, useId } from 'vue'
 import NodeEarthGlobe from '@/components/NodeEarthGlobe.vue'
 import { CardX } from '@/components/ui/card-x'
 import { DataTooltip } from '@/components/ui/data-tooltip'
@@ -28,6 +28,9 @@ const exchangeRateBaseCurrency = ref<CurrencyCode>('CNY')
 const excludeFreeNodes = ref(true)
 const financeRateCurrencies: readonly CurrencyCode[] = financeHelper.DISPLAY_FINANCE_CURRENCIES
 const summaryNodes = computed(() => props.nodes ?? nodesStore.nodes)
+const financeNodes = computed(() => summaryNodes.value.filter(node => node.showPrice !== false))
+const remainingValueNodes = computed(() => financeNodes.value.filter(node => node.showExpire !== false))
+const trafficNodes = computed(() => summaryNodes.value.filter(node => node.showTraffic !== false))
 const summaryTransitionKey = computed(() => props.transitionKey ?? 'all')
 const metricSwitchTransitionProps = computed(() => ({
   ...(appStore.disablePageAnimation
@@ -36,6 +39,13 @@ const metricSwitchTransitionProps = computed(() => ({
 }))
 
 const openFinanceCard = ref(false)
+const financeTriggerId = useId()
+const financePanelId = useId()
+
+function closeFinanceCard() {
+  openFinanceCard.value = false
+  document.getElementById(financeTriggerId)?.focus()
+}
 
 function getMetricSwitchStyle(index: number): Record<string, string> {
   return {
@@ -57,8 +67,8 @@ const totalSpeed = computed(() => {
 })
 
 const totalTraffic = computed(() => {
-  const up = summaryNodes.value.reduce((sum, node) => sum + (node.net_total_up || 0), 0)
-  const down = summaryNodes.value.reduce((sum, node) => sum + (node.net_total_down || 0), 0)
+  const up = trafficNodes.value.reduce((sum, node) => sum + (node.net_total_up || 0), 0)
+  const down = trafficNodes.value.reduce((sum, node) => sum + (node.net_total_down || 0), 0)
   return { up, down }
 })
 
@@ -97,7 +107,7 @@ const formattedDiskUsed = computed(() => formatBytesSplit(totalDisk.value.used, 
 const formattedDiskTotal = computed(() => formatBytesSplit(totalDisk.value.total, appStore.byteDecimals))
 
 const remainingValueCNY = computed(() => {
-  return financeHelper.calculateTotalRemainingValueCNY(summaryNodes.value, exchangeRates.value, excludeFreeNodes.value, nodesStore.pingNow)
+  return financeHelper.calculateTotalRemainingValueCNY(remainingValueNodes.value, exchangeRates.value, excludeFreeNodes.value, nodesStore.pingNow)
 })
 const targetExchangeRate = computed(() => exchangeRates.value[exchangeRateBaseCurrency.value] || 1)
 const remainingValue = computed(() => {
@@ -107,7 +117,7 @@ const formattedRemainingValue = computed(() => {
   return financeHelper.formatFinanceAmount(remainingValue.value, exchangeRateBaseCurrency.value)
 })
 const totalValueCNY = computed(() => {
-  return financeHelper.calculateTotalValueCNY(summaryNodes.value, exchangeRates.value, excludeFreeNodes.value)
+  return financeHelper.calculateTotalValueCNY(financeNodes.value, exchangeRates.value, excludeFreeNodes.value)
 })
 const totalValue = computed(() => {
   return totalValueCNY.value * targetExchangeRate.value
@@ -116,7 +126,7 @@ const formattedTotalValue = computed(() => {
   return financeHelper.formatFinanceAmount(totalValue.value, exchangeRateBaseCurrency.value)
 })
 const monthlyAverageCostCNY = computed(() => {
-  return financeHelper.calculateTotalMonthlyAverageCostCNY(summaryNodes.value, exchangeRates.value, excludeFreeNodes.value)
+  return financeHelper.calculateTotalMonthlyAverageCostCNY(financeNodes.value, exchangeRates.value, excludeFreeNodes.value)
 })
 const monthlyAverageCost = computed(() => {
   return monthlyAverageCostCNY.value * targetExchangeRate.value
@@ -146,7 +156,8 @@ const financeSummaryItems = computed(() => [
     symbol: formattedRemainingValue.value.symbol,
     currency: formattedRemainingValue.value.currency,
   },
-])
+].filter(item => item.label !== '剩余价值' || remainingValueNodes.value.length > 0))
+const financeHeadline = computed(() => remainingValueNodes.value.length ? formattedRemainingValue.value : formattedMonthlyAverageCost.value)
 const exchangeRateRows = computed(() => financeRateCurrencies.map((currency) => {
   const baseRate = exchangeRates.value[exchangeRateBaseCurrency.value] || 1
   const targetRate = exchangeRates.value[currency] || 1
@@ -252,18 +263,22 @@ onMounted(async () => {
         </div>
       </CardX>
       <div
+        v-if="financeNodes.length"
         class="relative w-full h-full"
         :class="showVisualPanel ? 'col-span-4 row-span-1 col-start-5 row-start-1' : 'col-span-1 row-start-1 col-start-2 min-h-18 md:min-h-24 md:row-start-1 md:col-start-3'"
+        @keydown.esc.stop="closeFinanceCard"
       >
         <CardX
+          :id="financeTriggerId" role="button" tabindex="0" :aria-expanded="openFinanceCard" :aria-controls="financePanelId" aria-label="查看财务汇总"
           hoverable
-          class="group h-full border-none rounded-md transition-all"
+          class="group h-full border-none rounded-md transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           :class="pickSurfaceClass('bg-background/60 hover:bg-background', 'bg-background/50 hover:bg-background backdrop-blur-xs')"
           content-class="h-full !p-3" @click="openFinanceCard = !openFinanceCard"
+          @keydown.enter.prevent="openFinanceCard = !openFinanceCard" @keydown.space.prevent="openFinanceCard = !openFinanceCard"
         >
           <div class="flex h-full flex-col justify-between gap-1">
             <div class="flex items-start justify-between">
-              <span class="text-xs font-medium tracking-wider text-muted-foreground">剩余价值</span>
+              <span class="text-xs font-medium tracking-wider text-muted-foreground">{{ remainingValueNodes.length ? '剩余价值' : '月均支出' }}</span>
               <Icon
                 icon="tabler:cash" :width="20" :height="20"
                 class="text-slate-500/20 group-hover:text-slate-500 transition-colors"
@@ -275,23 +290,24 @@ onMounted(async () => {
                 :style="getMetricSwitchStyle(2)"
               >
                 <span class="text-md md:text-2xl font-bold leading-none tracking-tight">
-                  {{ formattedRemainingValue.symbol }}{{ formattedRemainingValue.value }}
+                  {{ financeHeadline.symbol }}{{ financeHeadline.value }}
                 </span>
                 <span class="block truncate text-[11px] md:text-xs font-medium text-muted-foreground">
-                  {{ formattedRemainingValue.currency }}
+                  {{ financeHeadline.currency }}
                 </span>
               </div>
             </Transition>
           </div>
         </CardX>
         <CardX
+          :id="financePanelId" :inert="!openFinanceCard" :aria-hidden="!openFinanceCard"
           hoverable
           class="absolute top-0 left-1/2 z-20 h-42 w-[260%] max-w-88 -translate-x-[50%] -translate-y-[25%] rounded-md border-none shadow-[0_0_20px,0_0_0_1px] shadow-emerald-600/10 transition-all"
           :class="[
             pickSurfaceClass('bg-background', 'bg-background/50 backdrop-blur-lg'),
             openFinanceCard ? 'opacity-100 scale-100  -translate-y-[5%]' : 'opacity-0 pointer-events-none scale-50',
           ]"
-          content-class="h-full !p-4" @click="openFinanceCard = false"
+          content-class="h-full !p-4" @click="closeFinanceCard"
         >
           <div class="flex h-full min-w-0 flex-col overflow-hidden">
             <div class="shrink-0 grid grid-cols-3 gap-1.5">
@@ -353,6 +369,7 @@ onMounted(async () => {
         </CardX>
       </div>
       <CardX
+        v-if="trafficNodes.length"
         hoverable
         class="group h-full border-none rounded-md transition-all"
         :class="[

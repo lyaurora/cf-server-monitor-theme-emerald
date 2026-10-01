@@ -1,14 +1,13 @@
 <script setup lang="ts">
 import { Icon } from '@iconify/vue'
 import { computed, inject, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { RouterLink } from 'vue-router'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import { DataTooltip } from '@/components/ui/data-tooltip'
 import { useAppStore } from '@/stores/app'
 import { buildAdminUrl, getApiAssetUrl } from '@/utils/api'
 
-const router = useRouter()
 const appStore = useAppStore()
 
 const isScrolled = inject<ReturnType<typeof ref<boolean>>>('isScrolled', ref(false))
@@ -54,18 +53,18 @@ const sitename = computed(() => appStore.publicSettings?.sitename || 'CF Server 
     :class="isScrolled ? 'backdrop-blur-xl' : 'bg-transparent'"
   >
     <div class="px-4 flex-between h-14 max-w-[1280px] mx-auto">
-      <div class="flex items-center gap-3 cursor-pointer" @click="router.push('/')">
+      <RouterLink to="/" class="flex min-w-0 items-center gap-3 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label="返回首页">
         <Avatar class="size-8 rounded-none">
           <AvatarImage :src="siteFavicon" :alt="sitename" class="rounded-none" />
           <AvatarFallback>{{ sitename.slice(0, 1) }}</AvatarFallback>
         </Avatar>
-        <h3 class="m-0 text-lg font-semibold">
+        <h3 class="m-0 truncate text-lg font-semibold">
           {{ sitename }}
         </h3>
-      </div>
+      </RouterLink>
       <div class="flex items-center gap-2">
         <DataTooltip v-for="button in actionButtons" :key="button.action" :content="button.title" placement="left" content-class="whitespace-nowrap text-[11px] px-2">
-          <Button variant="ghost" size="icon-sm" @click="handleButtonClick(button.action)">
+          <Button variant="ghost" size="icon-sm" :aria-label="button.title" @click="handleButtonClick(button.action)">
             <Icon :icon="button.icon" :width="18" :height="18" />
           </Button>
         </DataTooltip>

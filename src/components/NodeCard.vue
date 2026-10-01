@@ -2,6 +2,7 @@
 import type { NodeData } from '@/stores/nodes'
 import { Icon } from '@iconify/vue'
 import { computed } from 'vue'
+import { RouterLink } from 'vue-router'
 import NodePingRow from '@/components/NodePingRow.vue'
 import { Badge } from '@/components/ui/badge'
 import { CardX } from '@/components/ui/card-x'
@@ -84,9 +85,13 @@ function openPingDialog() {
             :class="[props.node.online ? 'bg-emerald-600' : 'bg-red-600']"
           />
         </div>
-        <div class="text-md font-bold flex-1 min-w-0 truncate">
+        <RouterLink
+          :to="{ name: 'instance-detail', params: { id: node.uuid }, query: node.source_index === undefined ? undefined : { apiIndex: node.source_index } }"
+          class="text-md font-bold flex-1 min-w-0 truncate rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          :aria-label="`${node.name}，${node.online ? '在线' : '离线'}，查看详情`" @click.stop
+        >
           {{ props.node.name }}
-        </div>
+        </RouterLink>
       </div>
     </template>
 
@@ -155,7 +160,7 @@ function openPingDialog() {
           </div>
 
           <!-- 流量进度条 -->
-          <div class="flex flex-col gap-1">
+          <div v-if="node.showTraffic !== false" class="flex flex-col gap-1">
             <div class="w-full text-xs flex flex-row justify-between">
               <span class="text-muted-foreground">
                 流量
@@ -211,7 +216,7 @@ function openPingDialog() {
                   <span class="truncate">{{ formatBytesPerSecond(props.node.net_in ?? 0) }}</span>
                 </div>
               </div>
-              <div class="flex min-w-0 flex-col gap-1">
+              <div v-if="node.showTraffic !== false" class="flex min-w-0 flex-col gap-1">
                 <div class="flex items-center gap-1">
                   <Icon icon="tabler:upload" width="12" height="12" class="shrink-0" />
                   <span class="truncate">{{ formatBytes(props.node.net_total_up ?? 0) }}</span>
@@ -221,14 +226,14 @@ function openPingDialog() {
                   <span class="truncate">{{ formatBytes(props.node.net_total_down ?? 0) }}</span>
                 </div>
               </div>
-              <div class="flex min-w-0 flex-col gap-1">
-                <DataTooltip placement="top" :content="expiredDate" class="min-w-0" content-class="whitespace-nowrap">
+              <div v-if="node.showPrice !== false || node.showExpire !== false" class="flex min-w-0 flex-col gap-1">
+                <DataTooltip v-if="node.showExpire !== false" placement="top" :content="expiredDate" class="min-w-0" content-class="whitespace-nowrap">
                   <div class="flex items-center gap-1" :class="remainingTimeTagClass">
                     <Icon icon="tabler:calendar-stats" width="12" height="12" class="shrink-0" />
                     <span class="truncate">{{ expiryText }}</span>
                   </div>
                 </DataTooltip>
-                <div class="flex items-center gap-1">
+                <div v-if="node.showPrice !== false" class="flex items-center gap-1">
                   <Icon icon="tabler:coins" width="12" height="12" class="shrink-0" />
                   <span class="truncate">{{ planText }}</span>
                 </div>
@@ -272,5 +277,11 @@ function openPingDialog() {
 .node-card {
   position: relative;
   overflow: hidden;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-ping {
+    animation: none;
+  }
 }
 </style>

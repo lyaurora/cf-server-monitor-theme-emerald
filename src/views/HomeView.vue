@@ -7,7 +7,7 @@ import { useRouter } from 'vue-router'
 import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Empty } from '@/components/ui/empty'
 import { Input } from '@/components/ui/input'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -54,6 +54,8 @@ const updateDebouncedSearch = useDebounceFn((value: string) => {
 
 watch(searchText, (value) => {
   updateDebouncedSearch(value)
+  if (!value.trim())
+    debouncedSearchText.value = ''
 })
 
 const groups = computed(() => [
@@ -149,16 +151,6 @@ function getNodeItemTransitionStyle(index: number): Record<string, string> {
 
 <template>
   <div class="home-view">
-    <div v-if="appStore.connectionError" class="alert px-4">
-      <Alert
-        variant="destructive"
-        :class="pickSurfaceClass('border-none bg-red-400/10 rounded-md', 'border-none bg-red-400/10 backdrop-blur-xs rounded-md')"
-      >
-        <AlertTitle>监控服务错误</AlertTitle>
-        <AlertDescription>连接服务器失败，请检查网络设置或刷新页面后再试。</AlertDescription>
-      </Alert>
-    </div>
-
     <div v-if="appStore.alertEnabled && appStore.alertContent" class="alert px-4">
       <Alert :class="pickSurfaceClass('border-none bg-background rounded-md', 'border-none bg-background/60 backdrop-blur-xs rounded-md')">
         <AlertTitle v-if="appStore.alertTitle">
@@ -180,8 +172,8 @@ function getNodeItemTransitionStyle(index: number): Record<string, string> {
     <div class="node-info p-4 pt-0 flex flex-col gap-4 relative z-1 md:pointer-events-none" :class="appStore.earthViewMode === 'hide' && 'pt-4'">
       <div class="nodes">
         <Tabs v-model="appStore.nodeSelectedGroup" class="w-full flex-col gap-4">
-          <div class="flex gap-2 items-start flex-nowrap">
-            <div class="overflow-x-auto rounded-sm md:pointer-events-auto">
+          <div class="flex gap-2 items-start flex-wrap">
+            <div class="min-w-0 flex-1 overflow-x-auto rounded-sm md:pointer-events-auto">
               <TabsList :class="pickSurfaceClass('w-max h-8 bg-background/60 rounded-md', 'w-max h-8 bg-background/50 backdrop-blur-xl rounded-md')">
                 <TabsTrigger
                   v-for="g in groups" :key="g.name" :value="g.name"
@@ -194,6 +186,7 @@ function getNodeItemTransitionStyle(index: number): Record<string, string> {
             <div class="ml-auto search flex gap-2 items-center pointer-events-auto">
               <Button
                 variant="outline" size="icon" aria-label="卡片视图"
+                :aria-pressed="appStore.nodeViewMode === 'card'"
                 class="h-8 w-8 border-none shadow-none rounded-md"
                 :class="[pickSurfaceClass('bg-background hover:bg-background/95', 'bg-background/50 hover:bg-background/60 backdrop-blur-xs'), appStore.nodeViewMode === 'card' ? '!text-emerald-600 !bg-background' : '']"
                 @click="appStore.nodeViewMode = 'card'"
@@ -202,24 +195,32 @@ function getNodeItemTransitionStyle(index: number): Record<string, string> {
               </Button>
               <Button
                 variant="outline" size="icon" aria-label="列表视图"
+                :aria-pressed="appStore.nodeViewMode === 'list'"
                 class="h-8 w-8 border-none shadow-none rounded-md"
                 :class="[pickSurfaceClass('bg-background hover:bg-background/95', 'bg-background/50 hover:bg-background/60 backdrop-blur-xs'), appStore.nodeViewMode === 'list' ? '!text-emerald-600 !bg-background' : '']"
                 @click="appStore.nodeViewMode = 'list'"
               >
                 <Icon icon="tabler:table" :width="14" :height="14" />
               </Button>
-              <div class="relative z-1 w-8 h-8">
-                <div class="absolute top-0 right-0 ">
-                  <Input
-                    v-model="searchText" placeholder="搜索节点名称、地区、系统"
-                    class="h-8 w-8 rounded-md border-none shadow-none transition-all placeholder:text-transparent focus:!w-60 focus:!pl-7.5 focus:placeholder:!text-muted-foreground focus:!ring-emerald-500/10"
-                    :class="pickSurfaceClass('bg-background hover:!bg-background/95 focus:!bg-background', 'bg-background/50 hover:!bg-background/60 focus:!bg-background/80 backdrop-blur-xs')"
-                  />
-                  <Icon
-                    icon="tabler:search" :width="14" :height="14"
-                    class="absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none"
-                  />
-                </div>
+              <div
+                class="group/search relative z-1 h-8 w-8 transition-all focus-within:w-48 sm:focus-within:w-60"
+                :class="searchText && 'w-48 sm:w-60'"
+              >
+                <Input
+                  v-model="searchText" placeholder="搜索节点名称、地区、系统" aria-label="搜索节点"
+                  class="h-8 w-full rounded-md border-none shadow-none pl-2.5 pr-0 placeholder:text-transparent group-focus-within/search:pl-7.5 group-focus-within/search:pr-8 group-focus-within/search:placeholder:text-muted-foreground focus:!ring-emerald-500/10"
+                  :class="[pickSurfaceClass('bg-background hover:!bg-background/95 focus:!bg-background', 'bg-background/50 hover:!bg-background/60 focus:!bg-background/80 backdrop-blur-xs'), searchText && '!pl-7.5 !pr-8 placeholder:!text-muted-foreground']"
+                />
+                <Button
+                  v-if="searchText" variant="ghost" size="icon-sm" aria-label="清除搜索"
+                  class="absolute right-0 top-0 h-8 w-8" @click="searchText = ''"
+                >
+                  <Icon icon="tabler:x" :width="14" :height="14" />
+                </Button>
+                <Icon
+                  icon="tabler:search" :width="14" :height="14"
+                  class="absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none"
+                />
               </div>
             </div>
           </div>
@@ -249,7 +250,13 @@ function getNodeItemTransitionStyle(index: number): Record<string, string> {
               @ping-click="handlePingClick"
             />
             <div v-else class="text-muted-foreground text-center py-8">
-              <Empty description="暂无节点" />
+              <Empty :description="debouncedSearchText.trim() ? '没有匹配的节点' : '暂无节点'">
+                <template v-if="debouncedSearchText.trim()" #extra>
+                  <Button variant="outline" size="sm" @click="searchText = ''">
+                    清除搜索
+                  </Button>
+                </template>
+              </Empty>
             </div>
           </TabsContent>
         </Tabs>
@@ -266,6 +273,9 @@ function getNodeItemTransitionStyle(index: number): Record<string, string> {
           <DialogTitle class="truncate">
             {{ selectedPingNode.name }} 延迟 / 丢包
           </DialogTitle>
+          <DialogDescription class="sr-only">
+            查看所选时间范围内各线路的延迟和丢包情况，可切换时间范围与线路。
+          </DialogDescription>
           <div class="absolute inset-0 mx-0 max-w-none overflow-hidden bg-slate-50 dark:bg-slate-900/50 -z-9 zoom-90">
             <div class="absolute top-0 left-1/2 -ml-152 h-100 w-325 dark:mask-[linear-gradient(white,transparent)]">
               <div
