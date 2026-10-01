@@ -45,6 +45,8 @@ interface LiveSample {
 }
 
 function normalizeSampleTimestamp(value: unknown, fallback = Date.now()): number {
+  if (typeof value !== 'number' && typeof value !== 'string')
+    return fallback
   const number = Number(value)
   if (!Number.isFinite(number) || number <= 0)
     return fallback
@@ -220,15 +222,19 @@ class InitManager {
     const uuid = getDisplayUuid(apiIndex, sample.serverId)
     const currentNode = this.nodesStore.nodesByUuid.get(uuid)
     const current = this.pendingStatuses.get(uuid) ?? currentNode
-    const status = adaptServer({
+    const { client, status } = adaptServer({
       id: sample.serverId,
       ...sample.data,
+      boot_time: normalizeSampleTimestamp(sample.data.boot_time, 0) || Date.parse(currentNode?.boot_time ?? ''),
       last_updated: sample.ts,
-    }, apiIndex).status
+    }, apiIndex)
 
     this.nodesStore.recordPingSample(uuid, status)
     if (current && sample.ts < Date.parse(current.time))
       return
+
+    if (currentNode && client.boot_time)
+      currentNode.boot_time = client.boot_time
 
     if (current) {
       if (!sampleHasField(sample.data, 'cpu'))
@@ -247,8 +253,6 @@ class InitManager {
         status.net_monthly_up = current.net_monthly_up
       if (!sampleHasField(sample.data, 'net_rx_monthly'))
         status.net_monthly_down = current.net_monthly_down
-      if (!sampleHasField(sample.data, 'boot_time'))
-        status.uptime = current.uptime + Math.max(0, Math.floor((sample.ts - Date.parse(current.time)) / 1000))
       if (!sampleHasField(sample.data, 'ram_total'))
         status.ram_total = 'ram_total' in current ? current.ram_total : current.mem_total
       if (!sampleHasField(sample.data, 'swap_total'))
@@ -335,13 +339,12 @@ class InitManager {
       if (!isCurrent())
         return
       this.reconnectAttempts.set(apiIndex, 0)
-      if (!serverId) {
-        socket.send(JSON.stringify({
-          type: 'subscribe',
-          scope: 'all',
-          ids: getRegisteredServerIds(apiIndex),
-        }))
-      }
+      // Explicit subscription also asks the backend to resume fast agent reports.
+      socket.send(JSON.stringify({
+        type: 'subscribe',
+        scope: serverId ?? 'all',
+        ids: serverId ? [serverId] : getRegisteredServerIds(apiIndex),
+      }))
       this.nodesStore.updateWsState('connected', 0)
       if (this.timeoutMinutes > 0) {
         this.timeoutTimers.set(apiIndex, setTimeout(() => {

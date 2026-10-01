@@ -554,6 +554,8 @@ function numberField(source: Record<string, unknown>, ...keys: string[]): number
 }
 
 function timestamp(value: unknown, fallback = Date.now()): number {
+  if (typeof value !== 'number' && typeof value !== 'string')
+    return fallback
   const number = finiteNumber(value)
   if (!number)
     return fallback
@@ -1188,7 +1190,7 @@ export function adaptServer(server: CfServer, apiIndex: number, sysConfig: SysCo
       arch: server.arch || '-',
       cpu_cores: finiteNumber(server.cpu_cores),
       os: server.os || '-',
-      boot_time: bootTime ? new Date(bootTime).toISOString() : '',
+      boot_time: bootTime > 0 ? new Date(bootTime).toISOString() : '',
       gpu_name: getGpuName(server.gpu_info),
       gpu_info: normalizeGpuInfo(server.gpu_info),
       ipv4: server.ip_v4,
@@ -1242,7 +1244,7 @@ export function adaptServer(server: CfServer, apiIndex: number, sysConfig: SysCo
       connections: finiteNumber(server.tcp_conn),
       connections_udp: finiteNumber(server.udp_conn),
       online,
-      uptime: Math.max(0, Math.floor((now - bootTime) / 1000)),
+      uptime: bootTime > 0 ? Math.max(0, Math.floor((now - bootTime) / 1000)) : 0,
       ping,
       pingWindow,
     },
