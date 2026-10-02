@@ -16,8 +16,6 @@ import {
   getRegisteredServerIds,
   getServerSource,
   getSharedApi,
-  getWebSocketBases,
-  hasMultipleApiBases,
   isEnabledValue,
   mergeServerPingSample,
 } from '@/utils/api'
@@ -60,10 +58,10 @@ function sampleHasField(data: Record<string, unknown>, ...keys: string[]): boole
 class InitManager {
   private appStore = useAppStore()
   private nodesStore = useNodesStore()
-  private sockets = new Map<number, WebSocket>()
-  private reconnectTimers = new Map<number, ReturnType<typeof setTimeout>>()
-  private reconnectAttempts = new Map<number, number>()
-  private timeoutTimers = new Map<number, ReturnType<typeof setTimeout>>()
+  private socket: WebSocket | null = null
+  private reconnectTimer: ReturnType<typeof setTimeout> | undefined
+  private reconnectAttempts = 0
+  private timeoutTimer: ReturnType<typeof setTimeout> | undefined
   private timeoutMinutes = 0
   private liveUpdateTimer: ReturnType<typeof setInterval> | null = null
   private pendingStatuses = new Map<string, NodeStatus>()
@@ -81,10 +79,6 @@ class InitManager {
       let configs = await fetchSiteConfigs()
       if (this.destroyed)
         return
-      const turnstileConfigs = configs.filter(config => isEnabledValue(config.turnstile_enabled))
-      if (hasMultipleApiBases() && turnstileConfigs.length)
-        throw new Error('多后端聚合模式暂不支持启用 Turnstile 的源站')
-
       const first = configs[0]
       if (first && isEnabledValue(first.turnstile_enabled) && !first.verified) {
         if (!first.turnstile_site_key)
@@ -102,7 +96,7 @@ class InitManager {
         return
 
       const config = configs[0]
-      if (config?.site_title && !hasMultipleApiBases())
+      if (config?.site_title)
         document.title = config.site_title
       if (config && !isEnabledValue(config.is_public) && !config.authorization) {
         window.location.href = buildAdminUrl()
@@ -127,7 +121,9 @@ class InitManager {
       document.addEventListener('visibilitychange', this.onVisibilityChange)
       this.liveUpdateTimer = setInterval(() => {
         this.flushPendingStatuses()
-        this.nodesStore.refreshOnlineState()
+        // A paused or disconnected browser cannot infer outages from its stale snapshot.
+        if (this.nodesStore.wsConnectionState === 'connected')
+          this.nodesStore.refreshOnlineState()
       }, 1000)
       await this.refreshPage()
     }
@@ -150,7 +146,7 @@ class InitManager {
   private onVisibilityChange = (): void => {
     if (document.hidden) {
       this.revision++
-      this.closeSockets()
+      this.closeSocket()
       this.nodesStore.pageLoading = false
     }
     else {
@@ -160,7 +156,7 @@ class InitManager {
 
   async refreshPage(reconnectAttempt = 0): Promise<void> {
     const revision = ++this.revision
-    this.closeSockets()
+    this.closeSocket()
     if (this.destroyed || document.hidden)
       return
     const uuid = this.activeUuid
@@ -191,15 +187,8 @@ class InitManager {
       this.nodesStore.refreshOnlineState()
       this.appStore.connectionError = false
       if (!this.nodesStore.livePaused) {
-        if (reconnectAttempt > 0)
-          this.reconnectAttempts.set(0, reconnectAttempt)
-        if (uuid) {
-          const { apiIndex, serverId } = getServerSource(uuid)
-          this.connectSocket(apiIndex, serverId, revision)
-        }
-        else {
-          getWebSocketBases().forEach((_, apiIndex) => this.connectSocket(apiIndex, null, revision))
-        }
+        this.reconnectAttempts = reconnectAttempt
+        this.connectSocket(uuid ? getServerSource(uuid).serverId : null, revision)
       }
     }
     catch (error) {
@@ -209,7 +198,7 @@ class InitManager {
       if (error instanceof ApiError && [401, 403, 404].includes(error.code ?? 0))
         this.nodesStore.clearNodes()
       else
-        this.scheduleReconnect(0, revision, reconnectAttempt + 1)
+        this.scheduleReconnect(revision, reconnectAttempt + 1)
       throw error
     }
     finally {
@@ -323,36 +312,35 @@ class InitManager {
     }
   }
 
-  private connectSocket(apiIndex: number, serverId: string | null, revision: number): void {
+  private connectSocket(serverId: string | null, revision: number): void {
     if (this.destroyed || document.hidden || this.nodesStore.livePaused || revision !== this.revision)
       return
-    const baseUrl = getWebSocketBases()[apiIndex] ?? ''
-    const url = new URL(`${baseUrl}/api/ws`, window.location.origin)
+    const url = new URL('/api/ws', window.location.origin)
     url.searchParams.set('subscribe', serverId ?? 'all')
     url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
     const socket = new WebSocket(url)
-    this.sockets.set(apiIndex, socket)
-    const isCurrent = () => !this.destroyed && revision === this.revision && this.sockets.get(apiIndex) === socket
-    this.nodesStore.updateWsState(this.reconnectAttempts.get(apiIndex) ? 'reconnecting' : 'connecting', this.reconnectAttempts.get(apiIndex) ?? 0)
+    this.socket = socket
+    const isCurrent = () => !this.destroyed && revision === this.revision && this.socket === socket
+    this.nodesStore.updateWsState(this.reconnectAttempts ? 'reconnecting' : 'connecting', this.reconnectAttempts)
 
     socket.addEventListener('open', () => {
       if (!isCurrent())
         return
-      this.reconnectAttempts.set(apiIndex, 0)
+      this.reconnectAttempts = 0
       // Explicit subscription also asks the backend to resume fast agent reports.
       socket.send(JSON.stringify({
         type: 'subscribe',
         scope: serverId ?? 'all',
-        ids: serverId ? [serverId] : getRegisteredServerIds(apiIndex),
+        ids: serverId ? [serverId] : getRegisteredServerIds(0),
       }))
       this.nodesStore.updateWsState('connected', 0)
       if (this.timeoutMinutes > 0) {
-        this.timeoutTimers.set(apiIndex, setTimeout(() => {
+        this.timeoutTimer = setTimeout(() => {
           if (!isCurrent())
             return
           this.nodesStore.livePaused = true
-          this.closeSockets()
-        }, this.timeoutMinutes * 60_000))
+          this.closeSocket()
+        }, this.timeoutMinutes * 60_000)
       }
     })
     socket.addEventListener('message', (event) => {
@@ -366,44 +354,41 @@ class InitManager {
         return
       }
       if (message?.type === 'batchUpdate')
-        this.applyBatch(apiIndex, message, serverId)
+        this.applyBatch(0, message, serverId)
     })
     socket.addEventListener('close', () => {
       if (!isCurrent())
         return
-      const timeout = this.timeoutTimers.get(apiIndex)
-      if (timeout)
-        clearTimeout(timeout)
-      this.timeoutTimers.delete(apiIndex)
-      this.sockets.delete(apiIndex)
-      const attempts = (this.reconnectAttempts.get(apiIndex) ?? 0) + 1
-      this.scheduleReconnect(apiIndex, revision, attempts)
+      clearTimeout(this.timeoutTimer)
+      this.timeoutTimer = undefined
+      this.socket = null
+      this.scheduleReconnect(revision, this.reconnectAttempts + 1)
     })
     socket.addEventListener('error', () => socket.close())
   }
 
-  private scheduleReconnect(apiIndex: number, revision: number, attempts: number): void {
+  private scheduleReconnect(revision: number, attempts: number): void {
     if (this.destroyed || document.hidden || this.nodesStore.livePaused || revision !== this.revision)
       return
-    this.reconnectAttempts.set(apiIndex, attempts)
+    this.reconnectAttempts = attempts
     this.nodesStore.updateWsState('reconnecting', attempts)
     const delay = Math.min(30_000, 1000 * 2 ** Math.min(attempts, 5))
-    this.reconnectTimers.set(apiIndex, setTimeout(() => {
-      this.reconnectTimers.delete(apiIndex)
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = undefined
       if (!this.destroyed && revision === this.revision)
         void this.refreshPage(attempts).catch(error => console.error('[Live] Reconnect failed:', error))
-    }, delay))
+    }, delay)
   }
 
-  private closeSockets(): void {
-    const sockets = [...this.sockets.values()]
-    this.sockets.clear()
-    sockets.forEach(socket => socket.close())
-    this.reconnectTimers.forEach(timer => clearTimeout(timer))
-    this.reconnectTimers.clear()
-    this.reconnectAttempts.clear()
-    this.timeoutTimers.forEach(timer => clearTimeout(timer))
-    this.timeoutTimers.clear()
+  private closeSocket(): void {
+    const socket = this.socket
+    this.socket = null
+    socket?.close()
+    clearTimeout(this.reconnectTimer)
+    this.reconnectTimer = undefined
+    this.reconnectAttempts = 0
+    clearTimeout(this.timeoutTimer)
+    this.timeoutTimer = undefined
     this.flushPendingStatuses()
     this.nodesStore.updateWsState('disconnected', 0)
   }
@@ -418,7 +403,7 @@ class InitManager {
     this.revision++
     this.stopRouteWatch?.()
     document.removeEventListener('visibilitychange', this.onVisibilityChange)
-    this.closeSockets()
+    this.closeSocket()
     if (this.liveUpdateTimer)
       clearInterval(this.liveUpdateTimer)
     this.liveUpdateTimer = null

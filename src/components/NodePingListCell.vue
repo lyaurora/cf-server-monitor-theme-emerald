@@ -10,7 +10,7 @@ import { getPingToneClass } from '@/utils/nodeHelper'
 const props = defineProps<{ node: NodeData }>()
 const appStore = useAppStore()
 const pingLines = computed(() => resolvePingLines(Object.keys(props.node.ping ?? {}), appStore.publicSettings?.themeSettings.pingLinesByNode[props.node.uuid]))
-const latencies = Array.from({ length: 3 }, (_, index) => useNodePingDisplay(() => props.node.uuid, { line: () => pingLines.value[index] ?? '' }).latestLatency)
+const latencies = Array.from({ length: 3 }, (_, index) => useNodePingDisplay(() => props.node.uuid, () => pingLines.value[index] ?? '').latestLatency)
 const networks = computed(() => pingLines.value.map((key, index) => {
   const latency = latencies[index]!.value
   return {

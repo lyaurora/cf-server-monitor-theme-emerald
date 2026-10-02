@@ -12,7 +12,7 @@ const props = defineProps<{ node: NodeData, lineKey: string, index: number, line
 const emit = defineEmits<{ pingClick: [] }>()
 const appStore = useAppStore()
 const name = computed(() => props.node.ping?.[props.lineKey]?.name ?? props.lineKey)
-const { latencyDisplay, lossDisplay, latencyPanelTooltip, lossPanelTooltip, latencyRenderBars, lossRenderBars } = useNodePingDisplay(() => props.node.uuid, { line: () => props.lineKey })
+const { latencyDisplay, lossDisplay, latencyPanelTooltip, lossPanelTooltip, latencyRenderBars, lossRenderBars } = useNodePingDisplay(() => props.node.uuid, () => props.lineKey)
 const panels = computed(() => [
   { name: '延迟', bars: latencyRenderBars.value },
   { name: '丢包', bars: lossRenderBars.value },
