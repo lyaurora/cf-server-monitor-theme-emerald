@@ -51,12 +51,10 @@ export type CurrencyCode = keyof typeof FINANCE_CURRENCY_CONFIG
 export const SUPPORTED_FINANCE_CURRENCIES = Object.keys(FINANCE_CURRENCY_CONFIG) as CurrencyCode[]
 export const DISPLAY_FINANCE_CURRENCIES = ['CNY', 'USD', 'HKD', 'EUR', 'GBP', 'JPY'] as const satisfies readonly CurrencyCode[]
 export type ExchangeRates = Record<CurrencyCode, number>
-export type ExchangeRateSource = 'cache' | 'network' | 'stale-cache' | 'default'
 
 interface ExchangeRatesCache {
   base: 'CNY'
   date: string
-  fetchedAt: number
   rates: Partial<Record<CurrencyCode, number>>
 }
 
@@ -145,11 +143,6 @@ export const normalizedCurrencyMap: Record<string, CurrencyCode> = Object.assign
   {},
   EXPLICIT_CURRENCY_ALIASES,
   CURRENCY_SYMBOL_ALIASES,
-) as Record<string, CurrencyCode>
-
-/** symbol → ISO code 完整映射（含共享符号，供 detectLegacyCurrency 使用） */
-export const CURRENCY_SYMBOL_TO_CODE = Object.fromEntries(
-  Object.entries(FINANCE_CURRENCY_CONFIG).map(([code, config]) => [config.symbol, code]),
 ) as Record<string, CurrencyCode>
 
 export function normalizeCurrency(currency: string | null | undefined): CurrencyCode {
@@ -257,13 +250,6 @@ export function calculateTotalValueCNY(
   }, 0)
 }
 
-export function calculateValueCNY(
-  node: NodeData,
-  exchangeRates: ExchangeRates,
-): number {
-  return getPriceCNY(node, exchangeRates)
-}
-
 export function calculateTotalMonthlyAverageCostCNY(
   nodes: NodeData[],
   exchangeRates: ExchangeRates,
@@ -341,40 +327,20 @@ export function formatFinanceAmount(amount: number, currency: CurrencyCode): {
   }
 }
 
-export async function getDailyExchangeRates(): Promise<{
-  rates: ExchangeRates
-  source: ExchangeRateSource
-}> {
+export async function getDailyExchangeRates(): Promise<{ rates: ExchangeRates }> {
   const today = getTodayDateKey()
   const cached = readCachedExchangeRates()
 
-  if (cached && cached.date === today) {
-    return {
-      rates: cached.rates,
-      source: 'cache',
-    }
-  }
+  if (cached && cached.date === today)
+    return { rates: cached.rates }
 
   const fetchedRates = await fetchExchangeRates()
   if (fetchedRates) {
     writeCachedExchangeRates(fetchedRates, today)
-    return {
-      rates: fetchedRates,
-      source: 'network',
-    }
+    return { rates: fetchedRates }
   }
 
-  if (cached) {
-    return {
-      rates: cached.rates,
-      source: 'stale-cache',
-    }
-  }
-
-  return {
-    rates: DEFAULT_EXCHANGE_RATES,
-    source: 'default',
-  }
+  return { rates: cached?.rates ?? DEFAULT_EXCHANGE_RATES }
 }
 
 function getPriceCNY(node: NodeData, exchangeRates: ExchangeRates): number {
@@ -450,7 +416,6 @@ function writeCachedExchangeRates(rates: ExchangeRates, date: string): void {
   const cache: ExchangeRatesCache = {
     base: 'CNY',
     date,
-    fetchedAt: Date.now(),
     rates,
   }
   setLocalStorageItem(CACHE_KEY, JSON.stringify(cache))

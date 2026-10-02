@@ -1,12 +1,11 @@
 import type { CurrencyCode } from '@/utils/financeHelper'
-import type { Client, NodeStatus, NodeStatusPing, PingRecord, PingWindowPoint, StatusRecord } from '@/utils/rpc'
+import type { Client, NodeStatus, NodeStatusPing, PingRecord, PingWindowPoint, StatusRecord, TrafficLimitType } from '@/utils/rpc'
 import { isSupportedCurrency, normalizedCurrencyMap } from '@/utils/financeHelper'
 import { requestTurnstileToken } from '@/utils/turnstile'
 
 const ONLINE_THRESHOLD_MS = 5 * 60 * 1000
 const MB = 1024 * 1024
 const LEADING_SLASHES_REGEX = /^\/+/
-const TRAILING_SLASHES_REGEX = /\/+$/
 const PRICE_NUMBER_REGEX = /-?[\d.,]+/
 const BILLING_CYCLE_SUFFIX_REGEX = /\/\s*(?:(\d+(?:\.\d+)?)\s*)?(d(?:ay)?s?|m(?:onth)?s?|q(?:uarter)?s?|y(?:ear)?s?)\s*$/i
 const FREE_PRICE_REGEX = /^(?:free|免费)$/i
@@ -95,7 +94,6 @@ export interface SiteConfig {
   turnstile_enabled: boolean | string
   turnstile_login_enabled?: boolean | string
   turnstile_site_key?: string
-  frontend_ws_timeout_minutes?: number
   site_title?: string
   verified?: boolean
   turnstile_verified?: string | null
@@ -199,11 +197,8 @@ export interface CfServer {
   arch?: string
   os?: string
   region?: string
-  ip_v4?: string
-  ip_v6?: string
   boot_time?: string | number
   kernel_version?: string
-  agent_version?: string
   last_updated?: number | string
   timestamp?: number | string
   is_online?: boolean
@@ -265,36 +260,15 @@ export interface ThemeSettings {
 }
 
 export interface PublicSettings {
-  allow_cors: boolean
-  custom_body: string
-  custom_head: string
-  description: string
-  disable_password_login: boolean
-  oauth_enable: boolean
-  oauth_provider: string | null
   ping_record_preserve_time: number
-  private_site: boolean
-  record_enabled: boolean
   record_preserve_time: number
   sitename: string
-  theme: string
   themeSettings: ThemeSettings
-}
-
-export interface MeInfo {
-  logged_in: boolean
-  username: string
 }
 
 export interface VersionInfo {
   hash: string
   version: string
-}
-
-export interface ServerSource {
-  apiIndex: number
-  baseUrl: string
-  serverId: string
 }
 
 interface HistoryRow extends Record<string, unknown> {
@@ -308,30 +282,16 @@ interface AdaptedServer {
 
 export class ApiError extends Error {
   code?: number
-  apiIndex?: number
 
-  constructor(message: string, code?: number, apiIndex?: number) {
+  constructor(message: string, code?: number) {
     super(message)
     this.name = 'ApiError'
     this.code = code
-    this.apiIndex = apiIndex
   }
 }
 
-/** A browser-only network failure while requesting a backend on another origin. */
-export class CorsError extends ApiError {
-  origin: string
-
-  constructor(origin: string, apiIndex?: number) {
-    super('跨域请求被浏览器拦截', undefined, apiIndex)
-    this.name = 'CorsError'
-    this.origin = origin
-  }
-}
-
-const sourceRegistry = new Map<string, ServerSource>()
-const cachedSysConfigs = new Map<number, SysConfig>()
-let cachedSiteConfigs: SiteConfig[] = []
+let cachedSysConfig: SysConfig | undefined
+let cachedSiteConfig: SiteConfig | undefined
 
 type PingProviderKey = 'ct' | 'cu' | 'cm' | 'bd'
 type PingNodeKey = 'node_1' | 'node_2' | 'node_3' | 'node_4'
@@ -562,49 +522,9 @@ function timestamp(value: unknown, fallback = Date.now()): number {
   return number < 1e12 ? number * 1000 : number
 }
 
-function normalizeBase(value: string): string {
-  return value.trim().replace(TRAILING_SLASHES_REGEX, '')
-}
-
-export function getApiBases(): string[] {
-  return [typeof window === 'undefined' ? '' : window.location.origin]
-}
-
-export function getWebSocketBases(): string[] {
-  return getApiBases()
-}
-
-export function getApiAssetUrl(path: string, apiIndex = 0): string {
-  const bases = getApiBases()
-  const base = bases[apiIndex] ?? bases[0] ?? ''
-  const cleanPath = path.replace(LEADING_SLASHES_REGEX, '')
-  return base ? `${normalizeBase(base)}/${cleanPath}` : `/${cleanPath}`
-}
-
-export function hasMultipleApiBases(): boolean {
-  return getApiBases().length > 1
-}
-
-export function getServerSource(uuid: string): ServerSource {
-  return sourceRegistry.get(uuid) ?? {
-    apiIndex: 0,
-    baseUrl: getApiBases()[0] ?? '',
-    serverId: uuid,
-  }
-}
-
-export function getRegisteredServerIds(apiIndex: number): string[] {
-  return [...sourceRegistry.values()]
-    .filter(source => source.apiIndex === apiIndex)
-    .map(source => source.serverId)
-}
-
-export function getRegisteredDisplayUuids(): string[] {
-  return [...sourceRegistry.keys()]
-}
-
-export function getDisplayUuid(apiIndex: number, serverId: string): string {
-  return hasMultipleApiBases() ? `${apiIndex}:${serverId}` : serverId
+export function getApiAssetUrl(path: string): string {
+  const origin = typeof window === 'undefined' ? '' : window.location.origin
+  return `${origin}/${path.replace(LEADING_SLASHES_REGEX, '')}`
 }
 
 function getLocalStorageValue(key: string): string {
@@ -619,25 +539,13 @@ function getLocalStorageValue(key: string): string {
   }
 }
 
-function getBaseHostname(baseUrl: string): string {
-  if (typeof window === 'undefined')
-    return ''
-
-  try {
-    return new URL(baseUrl, window.location.origin).hostname
-  }
-  catch {
-    return ''
-  }
-}
-
-function authHeaders(baseUrl: string, initialHeaders?: HeadersInit): Headers {
+function authHeaders(initialHeaders?: HeadersInit): Headers {
   const headers = new Headers(initialHeaders)
   const token = getLocalStorageValue('jwt_token')
   if (token)
     headers.set('Authorization', `Bearer ${token}`)
 
-  const host = getBaseHostname(baseUrl)
+  const host = typeof window === 'undefined' ? '' : window.location.hostname
   const turnstileToken = getLocalStorageValue('turnstile_token')
   const verified = (host ? getLocalStorageValue(`turnstile_verified_${host}`) : '') || getLocalStorageValue('turnstile_verified')
   if (turnstileToken)
@@ -647,9 +555,9 @@ function authHeaders(baseUrl: string, initialHeaders?: HeadersInit): Headers {
   return headers
 }
 
-function clearTurnstileSession(baseUrl: string): void {
+function clearTurnstileSession(): void {
   try {
-    const host = new URL(baseUrl, window.location.origin).hostname
+    const host = window.location.hostname
     localStorage.removeItem(`turnstile_verified_${host}`)
     localStorage.removeItem('turnstile_verified')
     localStorage.removeItem('turnstile_token')
@@ -657,8 +565,8 @@ function clearTurnstileSession(baseUrl: string): void {
   catch {}
 }
 
-function storeTurnstileVerified(baseUrl: string, verified: string): void {
-  const host = new URL(baseUrl, window.location.origin).hostname
+function storeTurnstileVerified(verified: string): void {
+  const host = window.location.hostname
   localStorage.setItem(`turnstile_verified_${host}`, verified)
   localStorage.setItem('turnstile_verified', verified)
   localStorage.removeItem('turnstile_token')
@@ -666,27 +574,22 @@ function storeTurnstileVerified(baseUrl: string, verified: string): void {
 
 /** 并发 403 共享同一次重新验证，避免一次性 token 被重复消费。 */
 let turnstileRefreshPromise: Promise<boolean> | null = null
+let turnstileRefreshRevision = 0
 
-async function resolveTurnstileSiteKey(apiIndex: number): Promise<string | null> {
-  const cached = cachedSiteConfigs[apiIndex] ?? cachedSiteConfigs[0]
+async function resolveTurnstileSiteKey(): Promise<string | null> {
+  const cached = cachedSiteConfig
   if (cached && enabled(cached.turnstile_enabled) && cached.turnstile_site_key)
     return cached.turnstile_site_key
 
   // Cold start：本地 verified 已过期被清掉后，裸请求拿 site key（不带 Turnstile 头）
-  const bases = getApiBases()
-  const baseUrl = bases[apiIndex] ?? bases[0] ?? ''
-
   try {
-    const response = await fetch(`${baseUrl}/api/config`)
+    const response = await fetch('/api/config')
     if (!response.ok)
       return null
     const data = await response.json() as SiteConfig
     if (!enabled(data.turnstile_enabled) || !data.turnstile_site_key)
       return null
-    if (!cachedSiteConfigs.length)
-      cachedSiteConfigs = [data]
-    else
-      cachedSiteConfigs[apiIndex] = data
+    cachedSiteConfig = data
     return data.turnstile_site_key
   }
   catch {
@@ -697,23 +600,27 @@ async function resolveTurnstileSiteKey(apiIndex: number): Promise<string | null>
 /**
  * Turnstile verified 失效后：弹窗重新验证，用 token 换新的 verified，再让调用方重试原请求。
  */
-async function refreshTurnstileSession(apiIndex: number): Promise<boolean> {
+async function refreshTurnstileSession(): Promise<boolean> {
   if (turnstileRefreshPromise)
     return turnstileRefreshPromise
 
+  turnstileRefreshRevision++
   turnstileRefreshPromise = (async () => {
-    const siteKey = await resolveTurnstileSiteKey(apiIndex)
+    const siteKey = await resolveTurnstileSiteKey()
     if (!siteKey)
       return false
 
+    let token = ''
     try {
-      const token = await requestTurnstileToken(siteKey)
+      token = await requestTurnstileToken(siteKey)
       localStorage.setItem('turnstile_token', token)
       // allowRetry=false：换票本身失败时不再嵌套弹窗
-      await request('/api/config', apiIndex, {}, false)
+      await request('/api/config', {}, false)
       return true
     }
     catch {
+      if (token && getLocalStorageValue('turnstile_token') === token)
+        clearTurnstileSession()
       return false
     }
   })().finally(() => {
@@ -723,41 +630,20 @@ async function refreshTurnstileSession(apiIndex: number): Promise<boolean> {
   return turnstileRefreshPromise
 }
 
-function isCrossOriginRequest(baseUrl: string): boolean {
-  if (typeof window === 'undefined')
-    return false
-
-  try {
-    return new URL(baseUrl, window.location.origin).origin !== window.location.origin
-  }
-  catch {
-    return false
-  }
-}
-
 async function request<T>(
   path: string,
-  apiIndex = 0,
   options: RequestInit = {},
   allowTurnstileRetry = true,
 ): Promise<T> {
-  const bases = getApiBases()
-  const baseUrl = bases[apiIndex] ?? bases[0] ?? ''
-  let response: Response
-  try {
-    response = await fetch(`${baseUrl}${path}`, {
-      ...options,
-      headers: authHeaders(baseUrl, options.headers),
-    })
-  }
-  catch (error) {
-    // Fetch intentionally hides CORS details from JavaScript. For a request to
-    // another origin, this gives the UI a useful remediation path instead of a
-    // generic connection error.
-    if (isCrossOriginRequest(baseUrl))
-      throw new CorsError(window.location.origin, apiIndex)
-    throw error
-  }
+  if (allowTurnstileRetry && turnstileRefreshPromise && !await turnstileRefreshPromise)
+    throw new ApiError('Turnstile 验证失败', 403)
+
+  const requestAuthRevision = turnstileRefreshRevision
+  const requestHeaders = authHeaders(options.headers)
+  const response = await fetch(path, {
+    ...options,
+    headers: requestHeaders,
+  })
 
   let data: unknown
   try {
@@ -772,30 +658,42 @@ async function request<T>(
       ? String((data as { error: unknown }).error)
       : `HTTP ${response.status}`
     if (response.status === 403) {
-      clearTurnstileSession(baseUrl)
-      if (allowTurnstileRetry && await refreshTurnstileSession(apiIndex))
-        return request(path, apiIndex, options, false)
+      // Wait for the in-flight exchange; its token must only be consumed once.
+      if (allowTurnstileRetry && turnstileRefreshPromise) {
+        if (await turnstileRefreshPromise)
+          return request(path, options, false)
+      }
+      else {
+        const currentHeaders = authHeaders(options.headers)
+        const credentialsChanged = ['X-Turnstile-Token', 'X-Turnstile-Verified'].some(name =>
+          currentHeaders.has(name) && currentHeaders.get(name) !== requestHeaders.get(name),
+        )
+        // An old response must not restart a verification round that already failed.
+        if (!credentialsChanged && requestAuthRevision !== turnstileRefreshRevision)
+          throw new ApiError(message, response.status)
+        // A late failure from an old session must not clear the new session.
+        if (!credentialsChanged)
+          clearTurnstileSession()
+        if (allowTurnstileRetry && (credentialsChanged || await refreshTurnstileSession()))
+          return request(path, options, false)
+      }
     }
-    throw new ApiError(message, response.status, apiIndex)
+    throw new ApiError(message, response.status)
   }
 
   if (data && typeof data === 'object' && 'turnstile_verified' in data) {
     const verified = String((data as { turnstile_verified?: unknown }).turnstile_verified || '')
     if (verified)
-      storeTurnstileVerified(baseUrl, verified)
+      storeTurnstileVerified(verified)
   }
   return data as T
 }
 
-export async function fetchSiteConfigs(): Promise<SiteConfig[]> {
-  const results = await Promise.all(getApiBases().map((_, index) => request<SiteConfig>('/api/config', index)))
-  cachedSiteConfigs = results
-  applyCustomPingNames(results[0])
-  return results
-}
-
-export function getCachedSiteConfigs(): SiteConfig[] {
-  return cachedSiteConfigs
+export async function fetchSiteConfig(): Promise<SiteConfig> {
+  const config = await request<SiteConfig>('/api/config')
+  cachedSiteConfig = config
+  applyCustomPingNames(config)
+  return config
 }
 
 // Keep acknowledged edits while other Worker instances can still return cached configuration.
@@ -813,7 +711,7 @@ export async function saveNodePingLines(uuid: string, lines: string[]): Promise<
     .map(([key, edit]) => [key, edit.lines]))
   const pingLinesByNode = { ...adaptThemeOptions(existing).pingLinesByNode, ...recentEdits, [uuid]: lines }
   const themeOptions = { ...existing, pingLinesByNode }
-  const result = await request<{ success: boolean, message?: string }>('/api/theme_options', 0, {
+  const result = await request<{ success: boolean, message?: string }>('/api/theme_options', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ theme_options: themeOptions }),
@@ -821,7 +719,7 @@ export async function saveNodePingLines(uuid: string, lines: string[]): Promise<
   if (!result?.success)
     throw new Error(result?.message || '线路配置保存失败')
   savedPingLineEdits.set(uuid, { time: Date.now(), lines })
-  cachedSiteConfigs[0] = { ...config, theme_options: themeOptions }
+  cachedSiteConfig = { ...config, theme_options: themeOptions }
   return normalizePingLinesByNode(pingLinesByNode)
 }
 
@@ -1019,7 +917,7 @@ function parseTrafficLimit(value: unknown): number {
   return amount * 1024 ** 3
 }
 
-function trafficLimitType(value: unknown): string {
+function trafficLimitType(value: unknown): TrafficLimitType {
   const type = String(value ?? '').toLowerCase()
   if (type === 'dl' || type === 'down')
     return 'down'
@@ -1034,7 +932,7 @@ function pingEntry(name: string, latency: unknown, loss: unknown): NodeStatusPin
   const lossValue = nullableNumber(loss) ?? Number.NaN
   // Keep explicit timeouts distinct from absent/disabled probe fields.
   const latest = latency === null || lossValue === 100 ? -1 : nullableNumber(latency) ?? Number.NaN
-  return { name, latest, avg: latest, tail: latest, loss: lossValue, min: latest, max: latest }
+  return { name, latest, loss: lossValue }
 }
 
 interface PingTaskDefinition {
@@ -1118,18 +1016,9 @@ function buildPingWindowPoint(
       loss: loss !== null && loss >= 0 && loss <= 100 ? loss : latency !== null && latency < 0 ? 100 : null,
     }]
   }))
-  const latencyValues = Object.values(lines).flatMap(point => point.latency === null ? [] : [point.latency])
-  const lossValues = Object.values(lines).flatMap(point => point.loss === null ? [] : [point.loss])
-
   return {
     time: new Date(ts).toISOString(),
     lines,
-    latency: latencyValues.length
-      ? latencyValues.reduce((sum, value) => sum + value, 0) / latencyValues.length
-      : null,
-    loss: lossValues.length
-      ? lossValues.reduce((sum, value) => sum + value, 0) / lossValues.length
-      : null,
   }
 }
 
@@ -1152,15 +1041,12 @@ function buildPingWindow(server: CfServer): PingWindowPoint[] | undefined {
   return points.length ? points : undefined
 }
 
-export function adaptServer(server: CfServer, apiIndex: number, sysConfig: SysConfig | undefined = server.sysConfig): AdaptedServer {
+export function adaptServer(server: CfServer, sysConfig: SysConfig | undefined = server.sysConfig): AdaptedServer {
   const wire = server as unknown as Record<string, unknown>
-  const uuid = getDisplayUuid(apiIndex, server.id)
-  const baseUrl = getApiBases()[apiIndex] ?? ''
-  sourceRegistry.set(uuid, { apiIndex, baseUrl, serverId: server.id })
+  const uuid = server.id
 
   const billing = adaptServerBilling(server)
   const updatedAt = timestamp(wire.report_timestamp ?? server.last_updated ?? server.timestamp, 0)
-  const load = String(server.load_avg ?? '').split(WHITESPACE_REGEX).map(finiteNumber)
   const now = Date.now()
   const bootTime = timestamp(server.boot_time, 0)
   const online = updatedAt > 0 && now - updatedAt < ONLINE_THRESHOLD_MS
@@ -1181,11 +1067,8 @@ export function adaptServer(server: CfServer, apiIndex: number, sysConfig: SysCo
   return {
     client: {
       uuid,
-      source_id: server.id,
-      source_index: apiIndex,
       name: server.name || server.id,
       cpu_name: server.cpu_info || '-',
-      virtualization: '-',
       kernel_version: server.kernel_version || '-',
       arch: server.arch || '-',
       cpu_cores: finiteNumber(server.cpu_cores),
@@ -1193,14 +1076,10 @@ export function adaptServer(server: CfServer, apiIndex: number, sysConfig: SysCo
       boot_time: bootTime > 0 ? new Date(bootTime).toISOString() : '',
       gpu_name: getGpuName(server.gpu_info),
       gpu_info: normalizeGpuInfo(server.gpu_info),
-      ipv4: server.ip_v4,
-      ipv6: server.ip_v6,
       region: String(server.region || '').toUpperCase(),
-      public_remark: '',
       mem_total: finiteNumber(server.ram_total) * MB,
       swap_total: optionalMegabytes(server.swap_total),
       disk_total: finiteNumber(server.disk_total) * MB,
-      version: server.agent_version,
       weight: finiteNumber(server.sort_order),
       price: billing.price,
       price_configured: billing.priceConfigured,
@@ -1210,39 +1089,14 @@ export function adaptServer(server: CfServer, apiIndex: number, sysConfig: SysCo
       expired_at: server.expire_date || server.expired_at || '9999-12-31',
       group: server.server_group || '默认分组',
       tags: server.tags || '',
-      hidden: false,
       showPrice: sysConfig?.show_price === undefined || enabled(sysConfig.show_price),
       showExpire: sysConfig?.show_expire === undefined || enabled(sysConfig.show_expire),
       showTraffic: sysConfig?.show_tf === undefined || enabled(sysConfig.show_tf),
       traffic_limit: parseTrafficLimit(server.traffic_limit),
       traffic_limit_type: trafficLimitType(server.traffic_calc_type),
-      created_at: '',
-      updated_at: updatedAt ? new Date(updatedAt).toISOString() : '',
     },
     status: {
-      client: uuid,
-      time: updatedAt ? new Date(updatedAt).toISOString() : '',
-      cpu: finiteNumber(server.cpu),
-      gpu: finiteNumber(server.gpu),
-      ram: finiteNumber(server.ram_used) * MB,
-      ram_total: finiteNumber(server.ram_total) * MB,
-      swap: optionalMegabytes(server.swap_used),
-      swap_total: optionalMegabytes(server.swap_total),
-      load: load[0] ?? 0,
-      load5: load[1] ?? 0,
-      load15: load[2] ?? 0,
-      temp: 0,
-      disk: finiteNumber(server.disk_used) * MB,
-      disk_total: finiteNumber(server.disk_total) * MB,
-      net_in: numberField(wire, 'net_in_speed', 'net_in'),
-      net_out: numberField(wire, 'net_out_speed', 'net_out'),
-      net_total_up: numberField(wire, 'net_tx', 'net_total_up', 'net_tx_monthly'),
-      net_total_down: numberField(wire, 'net_rx', 'net_total_down', 'net_rx_monthly'),
-      net_monthly_up: numberField(wire, 'net_tx_monthly', 'net_tx'),
-      net_monthly_down: numberField(wire, 'net_rx_monthly', 'net_rx'),
-      process: finiteNumber(server.processes),
-      connections: finiteNumber(server.tcp_conn),
-      connections_udp: finiteNumber(server.udp_conn),
+      ...adaptStatusRecord(uuid, wire, updatedAt ? new Date(updatedAt).toISOString() : ''),
       online,
       uptime: bootTime > 0 ? Math.max(0, Math.floor((now - bootTime) / 1000)) : 0,
       ping,
@@ -1254,38 +1108,23 @@ export function adaptServer(server: CfServer, apiIndex: number, sysConfig: SysCo
 export async function fetchAllServers(): Promise<{
   clients: Record<string, Client>
   statuses: Record<string, NodeStatus>
-  latestReportUpdates: Array<{ apiIndex: number, updates: LatestReportUpdate[] }>
-  /** 首个带 sysConfig 的响应（多后端取第一个），无则 undefined */
+  latestReportUpdates: LatestReportUpdate[]
   sysConfig?: SysConfig
 }> {
-  sourceRegistry.clear()
-  const responses = await Promise.all(getApiBases().map((_, index) => request<ServersResponse>('/api/servers', index)))
+  const response = await request<ServersResponse>('/api/servers')
+  if (response.sysConfig)
+    cachedSysConfig = response.sysConfig
   const clients: Record<string, Client> = {}
   const statuses: Record<string, NodeStatus> = {}
-  const latestReportUpdates: Array<{ apiIndex: number, updates: LatestReportUpdate[] }> = []
-  responses.forEach((response, apiIndex) => {
-    if (response.sysConfig)
-      cachedSysConfigs.set(apiIndex, response.sysConfig)
-    for (const server of response.servers ?? []) {
-      const adapted = adaptServer(server, apiIndex, response.sysConfig)
-      clients[adapted.client.uuid] = adapted.client
-      statuses[adapted.client.uuid] = adapted.status
-    }
-    if (response.latestReportUpdates?.length) {
-      latestReportUpdates.push({ apiIndex, updates: response.latestReportUpdates })
-    }
-  })
-  return {
-    clients,
-    statuses,
-    latestReportUpdates,
-    sysConfig: responses.find(response => response.sysConfig)?.sysConfig,
+  for (const server of response.servers ?? []) {
+    const { client, status } = adaptServer(server, response.sysConfig)
+    clients[client.uuid] = client
+    statuses[client.uuid] = status
   }
+  return { clients, statuses, latestReportUpdates: response.latestReportUpdates ?? [], sysConfig: response.sysConfig }
 }
 
-function rowToStatusRecord(uuid: string, row: HistoryRow): StatusRecord {
-  const wire = row as Record<string, unknown>
-  const time = new Date(timestamp(row.timestamp)).toISOString()
+function adaptStatusRecord(uuid: string, row: Record<string, unknown>, time: string): StatusRecord {
   const load = String(row.load_avg ?? '').split(WHITESPACE_REGEX).map(finiteNumber)
   return {
     client: uuid,
@@ -1302,30 +1141,48 @@ function rowToStatusRecord(uuid: string, row: HistoryRow): StatusRecord {
     temp: 0,
     disk: finiteNumber(row.disk_used) * MB,
     disk_total: finiteNumber(row.disk_total) * MB,
-    net_in: numberField(wire, 'net_in_speed', 'net_in'),
-    net_out: numberField(wire, 'net_out_speed', 'net_out'),
-    net_total_up: numberField(wire, 'net_tx', 'net_total_up', 'net_tx_monthly'),
-    net_total_down: numberField(wire, 'net_rx', 'net_total_down', 'net_rx_monthly'),
-    net_monthly_up: numberField(wire, 'net_tx_monthly', 'net_tx'),
-    net_monthly_down: numberField(wire, 'net_rx_monthly', 'net_rx'),
+    net_in: numberField(row, 'net_in_speed', 'net_in'),
+    net_out: numberField(row, 'net_out_speed', 'net_out'),
+    net_total_up: numberField(row, 'net_tx', 'net_total_up', 'net_tx_monthly'),
+    net_total_down: numberField(row, 'net_rx', 'net_total_down', 'net_rx_monthly'),
+    net_monthly_up: numberField(row, 'net_tx_monthly', 'net_tx'),
+    net_monthly_down: numberField(row, 'net_rx_monthly', 'net_rx'),
     process: finiteNumber(row.processes),
     connections: finiteNumber(row.tcp_conn),
     connections_udp: finiteNumber(row.udp_conn),
   }
 }
 
-export async function fetchHistory(uuid: string, hours = 1): Promise<StatusRecord[]> {
-  const source = getServerSource(uuid)
-  const rows = await request<HistoryRow[]>(`/api/history/all?id=${encodeURIComponent(source.serverId)}&hours=${hours}`, source.apiIndex)
-  return (rows ?? []).map(row => rowToStatusRecord(uuid, row))
+// Share only in-flight requests; each chart keeps its own time range and fresh reloads.
+const pendingHistory = new Map<string, Promise<HistoryRow[]>>()
+
+export function invalidateHistoryRequests(): void {
+  pendingHistory.clear()
+}
+
+function fetchHistoryRows(uuid: string, hours: number): Promise<HistoryRow[]> {
+  const path = `/api/history/all?id=${encodeURIComponent(uuid)}&hours=${hours}`
+  let pending = pendingHistory.get(path)
+  if (!pending) {
+    pending = request<HistoryRow[]>(path).finally(() => {
+      if (pendingHistory.get(path) === pending)
+        pendingHistory.delete(path)
+    })
+    pendingHistory.set(path, pending)
+  }
+  return pending
+}
+
+export async function fetchLoadHistory(uuid: string, hours = 1): Promise<StatusRecord[]> {
+  const rows = await fetchHistoryRows(uuid, hours)
+  return (rows ?? []).map(row => adaptStatusRecord(uuid, row, new Date(timestamp(row.timestamp)).toISOString()))
 }
 
 export async function fetchPingHistory(uuid: string, hours = 1): Promise<{
   records: PingRecord[]
   tasks: Array<{ id: number, key: PingTaskKey, name: string, interval: number, loss?: number }>
 }> {
-  const source = getServerSource(uuid)
-  const rows = await request<HistoryRow[]>(`/api/history/all?id=${encodeURIComponent(source.serverId)}&hours=${hours}`, source.apiIndex)
+  const rows = await fetchHistoryRows(uuid, hours)
   const records: PingRecord[] = []
   const losses = new Map<number, number[]>()
   const availableTasks = new Set<number>()
@@ -1374,62 +1231,29 @@ export async function fetchPingHistory(uuid: string, hours = 1): Promise<{
 }
 
 export async function fetchServer(uuid: string): Promise<CfServer> {
-  const source = getServerSource(uuid)
-  const server = await request<CfServer>(`/api/server?id=${encodeURIComponent(source.serverId)}`, source.apiIndex)
-  return { ...server, sysConfig: { ...cachedSysConfigs.get(source.apiIndex), ...server.sysConfig } }
+  const server = await request<CfServer>(`/api/server?id=${encodeURIComponent(uuid)}`)
+  return { ...server, sysConfig: { ...cachedSysConfig, ...server.sysConfig } }
 }
 
 export function buildAdminUrl(): string {
   return `${window.location.origin}/admin#/admin`
 }
 
-export class CfMonitorApi {
-  async getPublicSettings(): Promise<PublicSettings> {
-    const configs = cachedSiteConfigs.length ? cachedSiteConfigs : await fetchSiteConfigs()
-    const first = configs[0]
-    const loggedIn = configs.some(config => config.authorization)
-    // 与 CFSM 历史接口一致：访客最多 24 小时，登录后最多 7 天。
-    const historyHours = loggedIn ? 168 : 24
-    return {
-      allow_cors: true,
-      custom_body: '',
-      custom_head: '',
-      description: '',
-      disable_password_login: false,
-      oauth_enable: false,
-      oauth_provider: null,
-      ping_record_preserve_time: historyHours,
-      private_site: first ? !enabled(first.is_public) : false,
-      record_enabled: true,
-      record_preserve_time: historyHours,
-      sitename: hasMultipleApiBases() ? document.title : first?.site_title || document.title || 'CF Server Monitor',
-      theme: 'emerald',
-      themeSettings: adaptThemeOptions(first?.theme_options),
-    }
-  }
-
-  async getMe(): Promise<MeInfo> {
-    const configs = cachedSiteConfigs.length ? cachedSiteConfigs : await fetchSiteConfigs()
-    return { logged_in: configs.some(config => config.authorization), username: '' }
-  }
-
-  async getVersion(): Promise<VersionInfo> {
-    const configs = cachedSiteConfigs.length ? cachedSiteConfigs : await fetchSiteConfigs()
-    return { version: configs.map(config => config.version).filter(Boolean).join(' / '), hash: '' }
+export async function getPublicSettings(): Promise<PublicSettings> {
+  const config = cachedSiteConfig ?? await fetchSiteConfig()
+  // 与 CFSM 历史接口一致：访客最多 24 小时，登录后最多 7 天。
+  const historyHours = config.authorization ? 168 : 24
+  return {
+    ping_record_preserve_time: historyHours,
+    record_preserve_time: historyHours,
+    sitename: config.site_title || document.title || 'CF Server Monitor',
+    themeSettings: adaptThemeOptions(config.theme_options),
   }
 }
 
-let sharedApi: CfMonitorApi | null = null
-
-export function getSharedApi(): CfMonitorApi {
-  sharedApi ??= new CfMonitorApi()
-  return sharedApi
-}
-
-export function resetSharedApi(): void {
-  sharedApi = null
+export async function getVersion(): Promise<VersionInfo> {
+  const config = cachedSiteConfig ?? await fetchSiteConfig()
+  return { version: config.version || '', hash: '' }
 }
 
 export { request as cfRequest, enabled as isEnabledValue }
-
-export default CfMonitorApi

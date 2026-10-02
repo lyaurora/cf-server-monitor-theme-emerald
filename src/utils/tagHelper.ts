@@ -1,4 +1,3 @@
-import dayjs from 'dayjs'
 import { getCurrencyDisplaySymbol } from '@/utils/financeHelper'
 
 /** 计费周期类型 */
@@ -6,95 +5,6 @@ export type BillingCycleType = 'monthly' | 'quarterly' | 'semi_annual' | 'annual
 
 /** 过期状态类型 */
 export type ExpireStatus = 'expired' | 'critical' | 'warning' | 'normal' | 'long_term'
-
-/** 支持的标签颜色 */
-export type TagColor
-  = | 'ruby'
-    | 'gray'
-    | 'gold'
-    | 'bronze'
-    | 'brown'
-    | 'yellow'
-    | 'amber'
-    | 'orange'
-    | 'tomato'
-    | 'red'
-    | 'crimson'
-    | 'pink'
-    | 'plum'
-    | 'purple'
-    | 'violet'
-    | 'iris'
-    | 'indigo'
-    | 'blue'
-    | 'cyan'
-    | 'teal'
-    | 'jade'
-    | 'green'
-    | 'grass'
-    | 'lime'
-    | 'mint'
-    | 'sky'
-
-/** 所有支持的标签颜色列表 */
-export const TAG_COLORS = [
-  'ruby',
-  'gray',
-  'gold',
-  'bronze',
-  'brown',
-  'yellow',
-  'amber',
-  'orange',
-  'tomato',
-  'red',
-  'crimson',
-  'pink',
-  'plum',
-  'purple',
-  'violet',
-  'iris',
-  'indigo',
-  'blue',
-  'cyan',
-  'teal',
-  'jade',
-  'green',
-  'grass',
-  'lime',
-  'mint',
-  'sky',
-] as const
-
-/** Radix Themes 颜色到 HEX 的映射（基于 light 模式的 9 色阶） */
-export const TAG_COLOR_HEX_MAP: Record<TagColor, string> = {
-  ruby: '#E5484D',
-  gray: '#8D8D8D',
-  gold: '#E5C00D',
-  bronze: '#C2853C',
-  brown: '#AA6A38',
-  yellow: '#F9D400',
-  amber: '#F5B21A',
-  orange: '#F97316',
-  tomato: '#E54D2E',
-  red: '#E5484D',
-  crimson: '#E93D82',
-  pink: '#E24D8C',
-  plum: '#A855C2',
-  purple: '#8E4EC6',
-  violet: '#7C5DFA',
-  iris: '#5B5BD6',
-  indigo: '#6366F1',
-  blue: '#0090FF',
-  cyan: '#00A2C7',
-  teal: '#12A594',
-  jade: '#29A383',
-  green: '#30A46C',
-  grass: '#46A358',
-  lime: '#84CC16',
-  mint: '#4FD1C5',
-  sky: '#00A6ED',
-}
 
 /** 计费周期范围配置（天） */
 const BILLING_CYCLE_RANGES: Array<{ type: BillingCycleType, min: number, max: number }> = [
@@ -115,8 +25,7 @@ const EXPIRE_THRESHOLDS = {
   long_term: 36500, // 约100年视为长期
 } as const
 
-const TAG_COLOR_SUFFIX_REGEX = /<(\w+)>$/
-const TAG_COLOR_SUFFIX_REMOVE_REGEX = /<\w+>$/
+const TAG_COLOR_SUFFIX_REGEX = /<(?:ruby|gray|gold|bronze|brown|yellow|amber|orange|tomato|red|crimson|pink|plum|purple|violet|iris|indigo|blue|cyan|teal|jade|green|grass|lime|mint|sky)>$/i
 const TAG_SEPARATOR_REGEX = /[,;]/
 
 /**
@@ -171,12 +80,13 @@ export function getDaysUntilExpired(expiredAt: string | number | undefined, now 
   if (!expiredAt)
     return 0
 
-  const expiredDate = dayjs(expiredAt)
+  // CFSM uses native Date: YYYY-MM-DD expires at UTC midnight, with days rounded up.
+  const expiresAt = new Date(expiredAt).getTime()
 
-  if (!expiredDate.isValid())
+  if (!Number.isFinite(expiresAt))
     return 0
 
-  return Math.round(expiredDate.diff(dayjs(now), 'day', true))
+  return Math.ceil((expiresAt - now) / 86_400_000)
 }
 
 /**
@@ -185,10 +95,10 @@ export function getDaysUntilExpired(expiredAt: string | number | undefined, now 
  * @returns 过期状态
  */
 export function getExpireStatus(expiredAt: string | number | undefined, now = Date.now()): ExpireStatus {
-  if (!expiredAt || !dayjs(expiredAt).isAfter(now))
+  const days = getDaysUntilExpired(expiredAt, now)
+  if (days <= 0)
     return 'expired'
 
-  const days = getDaysUntilExpired(expiredAt, now)
   if (days < EXPIRE_THRESHOLDS.critical)
     return 'critical'
   if (days < EXPIRE_THRESHOLDS.warning)
@@ -226,47 +136,6 @@ export function formatRemainingDays(expiredAt: string | number | undefined, now 
 }
 
 /**
- * 获取过期状态的显示颜色（Naive UI 颜色类型）
- * @param status 过期状态
- * @returns Naive UI 颜色类型
- */
-export function getExpireStatusColor(status: ExpireStatus): 'error' | 'warning' | 'success' | 'default' {
-  switch (status) {
-    case 'expired':
-    case 'critical':
-      return 'error'
-    case 'warning':
-      return 'warning'
-    case 'normal':
-    case 'long_term':
-      return 'success'
-    default:
-      return 'default'
-  }
-}
-
-/**
- * 获取过期状态的 HEX 颜色值
- * @param status 过期状态
- * @returns HEX 颜色值
- */
-export function getExpireStatusHexColor(status: ExpireStatus): string {
-  switch (status) {
-    case 'expired':
-    case 'critical':
-      return TAG_COLOR_HEX_MAP.tomato
-    case 'warning':
-      return TAG_COLOR_HEX_MAP.orange
-    case 'normal':
-      return TAG_COLOR_HEX_MAP.green
-    case 'long_term':
-      return TAG_COLOR_HEX_MAP.gray
-    default:
-      return TAG_COLOR_HEX_MAP.gray
-  }
-}
-
-/**
  * 获取过期时间的显示文本
  * @param expiredAt 过期时间
  * @param lang 语言
@@ -284,7 +153,7 @@ export function getExpireText(expiredAt: string | number | undefined, lang: 'zh-
     return lang === 'zh-CN' ? '长期' : 'Long-term'
   }
 
-  if (dayjs(expiredAt).valueOf() - now < 86_400_000)
+  if (new Date(expiredAt ?? '').getTime() - now < 86_400_000)
     return lang === 'zh-CN' ? '不足 1 天' : 'Less than 1 day'
 
   if (lang === 'zh-CN') {
@@ -294,55 +163,16 @@ export function getExpireText(expiredAt: string | number | undefined, lang: 'zh-
 }
 
 /**
- * 解析带颜色的标签
- * @param tag 标签字符串，支持格式 "文本<颜色>"
- * @returns 解析后的标签对象
- */
-export function parseTagWithColor(tag: string): { text: string, color: TagColor | null } {
-  const colorMatch = tag.match(TAG_COLOR_SUFFIX_REGEX)
-  if (colorMatch && colorMatch[1]) {
-    const colorCandidate = colorMatch[1].toLowerCase()
-    const text = tag.replace(TAG_COLOR_SUFFIX_REMOVE_REGEX, '')
-    if ((TAG_COLORS as readonly string[]).includes(colorCandidate)) {
-      return { text, color: colorCandidate as TagColor }
-    }
-  }
-  return { text: tag, color: null }
-}
-
-/**
- * 获取标签颜色对应的 HEX 值
- * @param color 标签颜色
- * @returns HEX 颜色值
- */
-export function getTagColorHex(color: TagColor): string {
-  return TAG_COLOR_HEX_MAP[color]
-}
-
-/**
  * 解析标签字符串为标签列表
  * @param tags 标签字符串，用逗号或分号分隔
  * @returns 标签数组
  */
-export function parseTags(tags: string | undefined): Array<{ text: string, color: TagColor, hex: string }> {
-  if (!tags || tags.trim() === '')
-    return []
-
-  const tagList = tags
+export function parseTags(tags: string | undefined): Array<{ text: string }> {
+  return (tags || '')
     .split(TAG_SEPARATOR_REGEX)
     .map(tag => tag.trim())
     .filter(Boolean)
-
-  return tagList.map((tag, index) => {
-    const { text, color } = parseTagWithColor(tag)
-    const defaultColor = TAG_COLORS[index % TAG_COLORS.length] ?? 'blue'
-    const resolvedColor = color ?? defaultColor
-    return {
-      text,
-      color: resolvedColor,
-      hex: getTagColorHex(resolvedColor),
-    }
-  })
+    .map(tag => ({ text: tag.replace(TAG_COLOR_SUFFIX_REGEX, '') }))
 }
 
 /**
@@ -405,18 +235,4 @@ export function formatPriceWithCycle(
   const priceText = formatPrice(price, currency, lang)
   const cycleText = getBillingCycleShortText(billingCycle)
   return Number(price) > 0 ? `${priceText}/${cycleText}` : priceText
-}
-
-/**
- * 检查是否有 IPv4
- */
-export function hasIPv4(ipv4: string | undefined | null): boolean {
-  return !!ipv4 && ipv4.trim() !== ''
-}
-
-/**
- * 检查是否有 IPv6
- */
-export function hasIPv6(ipv6: string | undefined | null): boolean {
-  return !!ipv6 && ipv6.trim() !== ''
 }

@@ -18,7 +18,6 @@ interface Token {
   content?: string
   url?: string
   alt?: string
-  children?: Token[]
 }
 
 function safeUrl(value: string | undefined, image = false): string | undefined {

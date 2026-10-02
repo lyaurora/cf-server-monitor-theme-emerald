@@ -5,8 +5,6 @@ import { formatPriceWithCycle, formatRemainingDays, getExpireStatus, getExpireTe
 export interface PriceTagItem {
   text: string
   highlightValue?: string
-  prefix?: string
-  suffix?: string
 }
 
 /**

@@ -88,8 +88,6 @@ function isNodeMatchSearch(node: typeof nodesStore.nodes[number], search: string
     return true
   if (node.tags && node.tags.toLowerCase().includes(lowerSearch))
     return true
-  if (node.remark && node.remark.toLowerCase().includes(lowerSearch))
-    return true
   return false
 }
 
@@ -130,7 +128,6 @@ function handleNodeClick(node: typeof nodesStore.nodes[number]) {
   router.push({
     name: 'instance-detail',
     params: { id: node.uuid },
-    query: node.source_index === undefined ? undefined : { apiIndex: node.source_index },
   })
 }
 

@@ -16,9 +16,9 @@ Use Bun for dependency management. `bun run lint` checks without changing files;
 
 ## Architecture
 
-- `src/utils/api.ts` owns CF Server Monitor HTTP access, same-origin request handling, server source registration, and field adaptation. This theme currently supports one same-origin backend.
+- `src/utils/api.ts` owns CF Server Monitor HTTP access, same-origin request handling, field adaptation, and shared in-flight history requests. This theme currently supports one same-origin backend.
 - `src/utils/init.ts` owns startup order, Turnstile, WebSocket subscriptions, reconnects, and periodic refresh.
-- `src/utils/rpc.ts` is a compatibility facade for Emerald chart components; it is not a JSON-RPC transport.
+- `src/utils/rpc.ts` contains normalized node and history data types; history queries are typed functions in `src/utils/api.ts`.
 - `src/stores/` remains the UI source of truth.
 - `src/components/ui/` is the local reka-ui/shadcn-vue-style component set.
 - `src/styles/main.css` contains Tailwind v4 and global design tokens.

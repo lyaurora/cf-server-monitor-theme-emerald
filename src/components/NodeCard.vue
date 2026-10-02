@@ -86,7 +86,7 @@ function openPingDialog() {
           />
         </div>
         <RouterLink
-          :to="{ name: 'instance-detail', params: { id: node.uuid }, query: node.source_index === undefined ? undefined : { apiIndex: node.source_index } }"
+          :to="{ name: 'instance-detail', params: { id: node.uuid } }"
           class="text-md font-bold flex-1 min-w-0 truncate rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           :aria-label="`${node.name}，${node.online ? '在线' : '离线'}，查看详情`" @click.stop
         >
@@ -97,9 +97,9 @@ function openPingDialog() {
 
     <template #header-extra>
       <div class="flex gap-2 items-center">
-        <img :src="getOSImage(props.node.os, props.node.source_index)" :alt="getOSName(props.node.os)" class="size-4">
+        <img :src="getOSImage(props.node.os)" :alt="getOSName(props.node.os)" class="size-4">
         <img
-          v-if="hasRegion(props.node.region)" :src="getApiAssetUrl(`flags/${getRegionCode(props.node.region).toLowerCase()}.svg`, props.node.source_index)"
+          v-if="hasRegion(props.node.region)" :src="getApiAssetUrl(`flags/${getRegionCode(props.node.region).toLowerCase()}.svg`)"
           :alt="getRegionDisplayName(props.node.region)" class="size-5 shrink-0 rounded-sm drop-shadow-[0_0_2px_rgba(0,0,0,0.1)]"
         >
       </div>

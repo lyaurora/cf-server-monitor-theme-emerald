@@ -2,7 +2,7 @@ import type { EarthViewMode, NodeViewMode, PublicSettings, ThemeMode } from '@/u
 import type { ByteDecimalsConfig } from '@/utils/helper'
 import { useEventListener, usePreferredDark, useStorageAsync } from '@vueuse/core'
 import { defineStore } from 'pinia'
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { resolvePingLines, saveNodePingLines, switchPingLine } from '@/utils/api'
 
 export type { ThemeMode }
@@ -32,7 +32,6 @@ const useAppStore = defineStore('app', () => {
   const isLoggedIn = ref<boolean>(false)
   const savingPingLines = ref(new Set<string>())
   let pendingPingSave = Promise.resolve()
-  const connectionError = ref<boolean>(false)
 
   // 首页滚动位置记忆
   const homeScrollPosition = ref<number>(0)
@@ -144,7 +143,6 @@ const useAppStore = defineStore('app', () => {
       return image && image !== 'none'
     })
   }
-  refreshInjectedBackground()
   useEventListener('resize', refreshInjectedBackground)
 
   const backgroundType = computed<'image' | 'video'>(() => {
@@ -207,7 +205,11 @@ const useAppStore = defineStore('app', () => {
   })
 
   const resolvedThemeMode = computed<'light' | 'dark'>(() => isDark.value ? 'dark' : 'light')
-  watch([resolvedThemeMode, publicSettings], refreshInjectedBackground, { flush: 'post' })
+  watch([resolvedThemeMode, publicSettings], async () => {
+    // useDark also updates html in a post watcher; read styles after it finishes.
+    await nextTick()
+    refreshInjectedBackground()
+  }, { flush: 'post', immediate: true })
 
   // 计算属性：当前主题模式下的背景 URL
   const currentBackgroundUrl = computed<string>(() => {
@@ -300,7 +302,6 @@ const useAppStore = defineStore('app', () => {
     savingPingLines,
     updateNodePingLines,
     publicSettings,
-    connectionError,
     homeScrollPosition,
     updateThemeMode,
     updateLoginState,

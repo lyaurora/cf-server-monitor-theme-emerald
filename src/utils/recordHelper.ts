@@ -93,6 +93,7 @@ export function fillMissingTimePoints<T extends { time?: string, updated_at?: st
 
   // 预计算时间戳，避免重复解析
   const timedData = data.map(item => ({ item, timeMs: getTime(item) }))
+    .filter(point => Number.isFinite(point.timeMs))
   timedData.sort((a, b) => a.timeMs - b.timeMs)
 
   const firstItem = timedData[0]
@@ -125,10 +126,11 @@ export function fillMissingTimePoints<T extends { time?: string, updated_at?: st
   const filled: T[] = timePoints.map((t) => {
     let found: T | undefined
 
-    // 跳过太旧的数据点
+    // 单向寻找最近点；等距取较早时间，同时间重复取最后一条。
     while (
-      dataIdx < timedData.length
-      && timedData[dataIdx]!.timeMs < t - matchToleranceMs
+      dataIdx + 1 < timedData.length
+      && (timedData[dataIdx + 1]!.timeMs === timedData[dataIdx]!.timeMs
+        || Math.abs(timedData[dataIdx + 1]!.timeMs - t) < Math.abs(timedData[dataIdx]!.timeMs - t))
     ) {
       dataIdx++
     }
@@ -152,127 +154,6 @@ export function fillMissingTimePoints<T extends { time?: string, updated_at?: st
   })
 
   return filled
-}
-
-/**
- * 线性插值填充
- * 在相邻两个有效点之间，用线性插值填充中间的 null 值
- * - 仅在"两个端点都存在且为数值"时进行插值
- * - 可通过 maxGapMs 控制最大可插值的时间跨度
- */
-export function interpolateNullsLinear(
-  rows: AnyRecord[],
-  keys: string[],
-  options?:
-    | number
-    | {
-      /** 统一的最大插值跨度 */
-      maxGapMs?: number
-      /** 若未提供 maxGapMs，则以典型间隔 * 该倍数作为最大插值跨度 */
-      maxGapMultiplier?: number
-      /** 统一的下限与上限（用于钳制） */
-      minCapMs?: number
-      maxCapMs?: number
-    },
-): AnyRecord[] {
-  if (!rows || rows.length === 0 || !keys.length)
-    return rows
-
-  const times = rows.map(r =>
-    dayjs(r.time ?? r.updated_at ?? '').valueOf(),
-  )
-  const out: AnyRecord[] = rows.map(r => ({ ...r }))
-
-  // 解析配置
-  const opts
-    = typeof options === 'number'
-      ? { maxGapMs: options }
-      : options || {}
-  const maxGapMsUnified = opts.maxGapMs
-  const multiplier = opts.maxGapMultiplier ?? 6
-  const minCap = opts.minCapMs ?? 2 * 60_000 // 2min
-  const maxCap = opts.maxCapMs ?? 30 * 60_000 // 30min
-
-  const clamp = (v: number, lo: number, hi: number) =>
-    Math.max(lo, Math.min(hi, v))
-
-  for (const key of keys) {
-    // 收集该列的有效点索引
-    const validIdx: number[] = []
-    for (let i = 0; i < rows.length; i++) {
-      const v = rows[i]?.[key]
-      if (typeof v === 'number' && Number.isFinite(v))
-        validIdx.push(i)
-    }
-
-    if (validIdx.length < 2)
-      continue
-
-    // 计算该列的"典型间隔"（使用中位数）
-    let perKeyMaxGap = maxGapMsUnified
-    if (perKeyMaxGap === undefined) {
-      const gaps: number[] = []
-      for (let s = 0; s < validIdx.length - 1; s++) {
-        const i0 = validIdx[s]
-        const i1 = validIdx[s + 1]
-        if (i0 === undefined || i1 === undefined)
-          continue
-        const t0 = times[i0]
-        const t1 = times[i1]
-        if (t0 !== undefined && t1 !== undefined && Number.isFinite(t0) && Number.isFinite(t1) && t1 > t0) {
-          gaps.push(t1 - t0)
-        }
-      }
-      if (gaps.length === 0)
-        continue
-      gaps.sort((a, b) => a - b)
-      const median = gaps[Math.floor(gaps.length / 2)]
-      if (median === undefined)
-        continue
-      perKeyMaxGap = clamp(median * multiplier, minCap, maxCap)
-    }
-
-    // 相邻有效点之间做线性插值
-    for (let s = 0; s < validIdx.length - 1; s++) {
-      const i0 = validIdx[s]
-      const i1 = validIdx[s + 1]
-      if (i0 === undefined || i1 === undefined)
-        continue
-
-      const t0 = times[i0]
-      const t1 = times[i1]
-      if (t0 === undefined || t1 === undefined)
-        continue
-
-      const row0 = rows[i0]
-      const row1 = rows[i1]
-      if (!row0 || !row1)
-        continue
-
-      const v0 = row0[key]
-      const v1 = row1[key]
-
-      if (!Number.isFinite(t0) || !Number.isFinite(t1) || t1 <= t0)
-        continue
-      if (typeof v0 !== 'number' || typeof v1 !== 'number')
-        continue
-      if (perKeyMaxGap && t1 - t0 > perKeyMaxGap)
-        continue // 间隔太大，保持空洞
-
-      for (let j = i0 + 1; j < i1; j++) {
-        const tj = times[j]
-        if (tj === undefined)
-          continue
-        const ratio = (tj - t0) / (t1 - t0)
-        const outRow = out[j]
-        if (outRow) {
-          outRow[key] = v0 + (v1 - v0) * ratio
-        }
-      }
-    }
-  }
-
-  return out
 }
 
 /**

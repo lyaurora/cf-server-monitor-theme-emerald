@@ -79,17 +79,11 @@ const sortedNodes = computed(() => {
   return nodes.sort((a, b) => {
     switch (key) {
       case 'status': return dir * ((a.online ? 1 : 0) - (b.online ? 1 : 0))
-      case 'region': {
-        const va = (a.region || '').toLowerCase()
-        const vb = (b.region || '').toLowerCase()
-        return dir * (va < vb ? -1 : va > vb ? 1 : 0)
-      }
       case 'name': {
         const va = (a.name || '').toLowerCase()
         const vb = (b.name || '').toLowerCase()
         return dir * (va < vb ? -1 : va > vb ? 1 : 0)
       }
-      case 'uptime': return dir * ((a.uptime ?? 0) - (b.uptime ?? 0))
       case 'os': {
         return dir * getOSName(a.os).localeCompare(getOSName(b.os), 'zh-CN')
       }
@@ -108,27 +102,12 @@ const formatBytes = (bytes: number) => formatBytesWithConfig(bytes, appStore.byt
 const formatBytesPerSecond = (bytes: number) => formatBytesPerSecondWithConfig(bytes, appStore.byteDecimals)
 const formatUptime = (seconds: number) => formatUptimeWithFormat(seconds, 'hour')
 
-const columnKeys = computed(() => visibleColumns.value.map(c => c.key))
-
 const gridStyle = computed(() => ({
   gridTemplateColumns: visibleColumns.value.map(c => c.width).join(' '),
 }))
 
-const offlineOverlayContentStyle = computed(() => {
-  const keys = columnKeys.value
-  const statusIndex = keys.indexOf('status')
-  const regionIndex = keys.indexOf('region')
-  const nameIndex = keys.indexOf('name')
-  const startColumn = nameIndex !== -1
-    ? nameIndex + 1
-    : regionIndex !== -1
-      ? regionIndex + 2
-      : statusIndex === -1 ? 1 : statusIndex + 2
-  return { gridColumn: `${startColumn} / -1` }
-})
-
-function getFlagSrc(region: string, apiIndex?: number): string {
-  return getApiAssetUrl(`flags/${getRegionCode(region).toLowerCase()}.svg`, apiIndex)
+function getFlagSrc(region: string): string {
+  return getApiAssetUrl(`flags/${getRegionCode(region).toLowerCase()}.svg`)
 }
 
 function handleClick(node: NodeData) {
@@ -205,12 +184,12 @@ function getRowTransitionStyle(index: number): Record<string, string> {
               <div v-else-if="col.key === 'name'" class="space-y-0.5" :class="[!node.online && 'blur-sm opacity-30']">
                 <div class="flex gap-1 items-center text-xs font-semibold">
                   <img
-                    v-if="hasRegion(node.region)" :src="getFlagSrc(node.region, node.source_index)"
+                    v-if="hasRegion(node.region)" :src="getFlagSrc(node.region)"
                     :alt="getRegionDisplayName(node.region)" class="size-5 rounded-sm drop-shadow-[0_0_2px_rgba(0,0,0,0.1)]"
                   >
                   <RouterLink
                     v-if="node.online"
-                    :to="{ name: 'instance-detail', params: { id: node.uuid }, query: node.source_index === undefined ? undefined : { apiIndex: node.source_index } }"
+                    :to="{ name: 'instance-detail', params: { id: node.uuid } }"
                     class="truncate rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     :aria-label="`${node.name}，在线，查看详情`" @click.stop
                   >
@@ -223,9 +202,7 @@ function getRowTransitionStyle(index: number): Record<string, string> {
                   <template v-if="getPriceTags(node, appStore.lang, nodesStore.pingNow.getTime()).length > 0">
                     <span v-for="(tag, tagIndex) in getPriceTags(node, appStore.lang, nodesStore.pingNow.getTime())" :key="tagIndex" class="ml-1">
                       <template v-if="tag.highlightValue">
-                        <span>{{ tag.prefix }}</span>
                         <span :class="getRemainingTimeTagClass(node, nodesStore.pingNow.getTime())">{{ tag.highlightValue }}</span>
-                        <span>{{ tag.suffix }}</span>
                       </template>
                       <template v-else>
                         {{ tag.text }}
@@ -263,7 +240,7 @@ function getRowTransitionStyle(index: number): Record<string, string> {
 
               <!-- 操作系统 -->
               <div v-else-if="col.key === 'os'" class="flex justify-center">
-                <img :src="getOSImage(node.os, node.source_index)" :alt="getOSName(node.os)" class="size-4">
+                <img :src="getOSImage(node.os)" :alt="getOSName(node.os)" class="size-4">
               </div>
 
               <!-- CPU -->
@@ -273,7 +250,7 @@ function getRowTransitionStyle(index: number): Record<string, string> {
                     <span class="inline group-hover:hidden">
                       {{ (node.cpu ?? 0).toFixed(1) }}%
                     </span>
-                    <span class="hidden group-hover:inline [@media(hover:none)]:block">
+                    <span class="hidden group-hover:inline">
                       {{ node.load.toFixed(2) ?? 0 }}, {{ node.load5.toFixed(2) ?? 0 }}, {{ node.load15.toFixed(2) ?? 0
                       }}
                     </span>
@@ -290,7 +267,7 @@ function getRowTransitionStyle(index: number): Record<string, string> {
                       <span class="inline group-hover:hidden">
                         {{ ((node.ram ?? 0) / (node.mem_total || 1) * 100).toFixed(1) }}%
                       </span>
-                      <span class="hidden group-hover:inline [@media(hover:none)]:block">
+                      <span class="hidden group-hover:inline">
                         {{ formatBytes(node.ram ?? 0) }} / {{ formatBytes(node.mem_total ?? 0) }}
                       </span>
                     </div>
@@ -315,7 +292,7 @@ function getRowTransitionStyle(index: number): Record<string, string> {
                     <span class="inline group-hover:hidden">
                       {{ ((node.disk ?? 0) / (node.disk_total || 1) * 100).toFixed(1) }}%
                     </span>
-                    <span class="hidden group-hover:inline [@media(hover:none)]:block">
+                    <span class="hidden group-hover:inline">
                       {{ formatBytes(node.disk ?? 0) }} / {{ formatBytes(node.disk_total ?? 0) }}
                     </span>
                   </div>
@@ -334,15 +311,14 @@ function getRowTransitionStyle(index: number): Record<string, string> {
                       <span class="inline group-hover:hidden">
                         {{ getTrafficUsedPercentage(node).toFixed(1) }}%
                       </span>
-                      <span class="hidden group-hover:inline [@media(hover:none)]:block">
+                      <span class="hidden group-hover:inline">
                         {{ formatBytes(getTrafficUsed(node)) }} /
                         <template v-if="showTrafficProgress(node)">{{ formatBytes(node.traffic_limit) }}</template>
                         <template v-else>∞</template>
                       </span>
                     </div>
                     <TrafficProgress
-                      :upload="node.net_monthly_up ?? 0" :download="node.net_monthly_down ?? 0"
-                      :traffic-limit="node.traffic_limit" :traffic-limit-type="(node.traffic_limit_type || 'sum')"
+                      :percentage="getTrafficUsedPercentage(node)"
                       height="4px"
                     />
                   </div>
@@ -379,9 +355,9 @@ function getRowTransitionStyle(index: number): Record<string, string> {
             v-if="!node.online" class="absolute inset-0 z-2 p-2 bg-background/10 rounded-lg flex items-center"
           >
             <div class="grid gap-2 items-center justify-center" :style="gridStyle">
-              <div class="h-full space-y-1" :style="offlineOverlayContentStyle">
+              <div class="h-full space-y-1" style="grid-column: 3 / -1">
                 <RouterLink
-                  :to="{ name: 'instance-detail', params: { id: node.uuid }, query: node.source_index === undefined ? undefined : { apiIndex: node.source_index } }"
+                  :to="{ name: 'instance-detail', params: { id: node.uuid } }"
                   class="block truncate rounded-sm text-sm font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   :aria-label="`${node.name}，离线，查看详情`" @click.stop
                 >

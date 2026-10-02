@@ -12,10 +12,10 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useBackgroundSurface } from '@/composables/useBackgroundSurface'
 import { useAppStore } from '@/stores/app'
 import { useNodesStore } from '@/stores/nodes'
+import { fetchLoadHistory } from '@/utils/api'
 import { DEFAULT_CHART_TIME_RANGE, getAvailableChartTimeRanges } from '@/utils/chartTimeRange'
 import { formatBytes, formatBytesSplit } from '@/utils/helper'
 import { fillMissingTimePoints } from '@/utils/recordHelper'
-import { getSharedRpc } from '@/utils/rpc'
 import '@/utils/echarts' // 共享 ECharts 配置
 
 const props = defineProps<{
@@ -112,15 +112,11 @@ watch(availableViews, (views) => {
 // 数据状态
 const remoteData = shallowRef<StatusRecord[]>([])
 const loading = ref(false)
-const isInitialLoad = ref(true) // 是否为首次加载（用于控制实时模式下的 NSpin 显示）
 const error = ref<string | null>(null)
 let fetchRequestId = 0
 
 // 节点信息
 const nodeInfo = computed(() => nodesStore.nodesByUuid.get(props.uuid))
-
-// RPC 客户端
-const rpc = getSharedRpc()
 
 // ==================== 数据获取 ====================
 
@@ -210,19 +206,17 @@ async function fetchData() {
   const hours = selectedHours.value
   const realtime = isRealtime.value
   const previousRecords = new Set(remoteData.value)
-  if (!realtime || isInitialLoad.value)
-    loading.value = true
+  loading.value = true
   error.value = null
 
   try {
-    const result = realtime
-      ? await rpc.getNodeRecentStatus(uuid)
-      : await rpc.getLoadRecords(uuid, hours)
+    const result = await fetchLoadHistory(uuid, hours)
     if (requestId !== fetchRequestId)
       return
 
     const liveRecords = realtime ? remoteData.value.filter(record => !previousRecords.has(record)) : []
-    const records = [...new Map([...(result.records || []), ...liveRecords].map(record => [record.time, record])).values()]
+    // History persistence can lag behind samples already displayed before this request.
+    const records = [...new Map([...(realtime ? remoteData.value : []), ...result, ...liveRecords].map(record => [record.time, record])).values()]
     records.sort((a, b) =>
       dayjs(a.time).valueOf() - dayjs(b.time).valueOf(),
     )
@@ -233,12 +227,10 @@ async function fetchData() {
     if (requestId !== fetchRequestId)
       return
     error.value = err instanceof Error ? err.message : '获取数据失败'
-    remoteData.value = []
   }
   finally {
     if (requestId === fetchRequestId) {
       loading.value = false
-      isInitialLoad.value = false
     }
   }
 }
@@ -343,7 +335,7 @@ const cpuChartOption = computed(() => ({
   tooltip: {
     ...baseTooltipConfig.value,
     formatter: (params: unknown) => {
-      const p = params as Array<{ dataIndex: number, seriesName: string, value: number, color: string }>
+      const p = (params as Array<{ dataIndex: number, seriesName: string, value: number, color: string }>).filter(item => Number.isFinite(item.value))
       if (!p.length)
         return ''
       const firstParam = p[0]
@@ -431,7 +423,7 @@ const memoryChartOption = computed(() => ({
   tooltip: {
     ...baseTooltipConfig.value,
     formatter: (params: unknown) => {
-      const p = params as Array<{ dataIndex: number, seriesName: string, value: number, color: string }>
+      const p = (params as Array<{ dataIndex: number, seriesName: string, value: number, color: string }>).filter(item => Number.isFinite(item.value))
       if (!p.length)
         return ''
       const firstParam = p[0]
@@ -480,7 +472,7 @@ const memoryChartOption = computed(() => ({
     {
       name: 'RAM',
       type: 'line',
-      data: chartData.value.map(r => r.ram ?? 0),
+      data: chartData.value.map(r => r.ram),
 
       showSymbol: false,
       lineStyle: { width: 1.5, color: chartColors.primary, cap: 'round' as const },
@@ -516,7 +508,7 @@ const diskChartOption = computed(() => ({
   tooltip: {
     ...baseTooltipConfig.value,
     formatter: (params: unknown) => {
-      const p = params as Array<{ dataIndex: number, value: number, color: string }>
+      const p = (params as Array<{ dataIndex: number, value: number, color: string }>).filter(item => Number.isFinite(item.value))
       if (!p.length)
         return ''
       const firstParam = p[0]
@@ -555,7 +547,7 @@ const diskChartOption = computed(() => ({
     {
       name: '磁盘已用',
       type: 'line',
-      data: chartData.value.map(r => r.disk ?? 0),
+      data: chartData.value.map(r => r.disk),
       showSymbol: false,
       lineStyle: { width: 1.5, color: chartColors.tertiary, cap: 'round' as const },
       areaStyle: {
@@ -582,7 +574,7 @@ const networkChartOption = computed(() => ({
   tooltip: {
     ...baseTooltipConfig.value,
     formatter: (params: unknown) => {
-      const p = params as Array<{ dataIndex: number, seriesName: string, value: number, color: string }>
+      const p = (params as Array<{ dataIndex: number, seriesName: string, value: number, color: string }>).filter(item => Number.isFinite(item.value))
       if (!p.length)
         return ''
       const firstParam = p[0]
@@ -629,7 +621,7 @@ const networkChartOption = computed(() => ({
     {
       name: '下载',
       type: 'line',
-      data: chartData.value.map(r => r.net_in ?? 0),
+      data: chartData.value.map(r => r.net_in),
 
       showSymbol: false,
       lineStyle: { width: 1.5, color: chartColors.quinary, cap: 'round' as const },
@@ -637,7 +629,7 @@ const networkChartOption = computed(() => ({
     {
       name: '上传',
       type: 'line',
-      data: chartData.value.map(r => r.net_out ?? 0),
+      data: chartData.value.map(r => r.net_out),
 
       showSymbol: false,
       lineStyle: { width: 1.5, color: chartColors.quaternary, cap: 'round' as const },
@@ -652,7 +644,7 @@ const connectionsChartOption = computed(() => ({
   tooltip: {
     ...baseTooltipConfig.value,
     formatter: (params: unknown) => {
-      const p = params as Array<{ dataIndex: number, seriesName: string, value: number, color: string }>
+      const p = (params as Array<{ dataIndex: number, seriesName: string, value: number, color: string }>).filter(item => Number.isFinite(item.value))
       if (!p.length)
         return ''
       const firstParam = p[0]
@@ -700,7 +692,7 @@ const connectionsChartOption = computed(() => ({
     {
       name: 'TCP',
       type: 'line',
-      data: chartData.value.map(r => r.connections ?? 0),
+      data: chartData.value.map(r => r.connections),
 
       showSymbol: false,
       lineStyle: { width: 1.5, color: chartColors.primary, cap: 'round' as const },
@@ -708,7 +700,7 @@ const connectionsChartOption = computed(() => ({
     {
       name: 'UDP',
       type: 'line',
-      data: chartData.value.map(r => r.connections_udp ?? 0),
+      data: chartData.value.map(r => r.connections_udp),
 
       showSymbol: false,
       lineStyle: { width: 1.5, color: chartColors.tertiary, cap: 'round' as const },
@@ -723,7 +715,7 @@ const processChartOption = computed(() => ({
   tooltip: {
     ...baseTooltipConfig.value,
     formatter: (params: unknown) => {
-      const p = params as Array<{ dataIndex: number, value: number, color: string }>
+      const p = (params as Array<{ dataIndex: number, value: number, color: string }>).filter(item => Number.isFinite(item.value))
       if (!p.length)
         return ''
       const firstParam = p[0]
@@ -760,7 +752,7 @@ const processChartOption = computed(() => ({
     {
       name: '进程数',
       type: 'line',
-      data: chartData.value.map(r => r.process ?? 0),
+      data: chartData.value.map(r => r.process),
 
       showSymbol: false,
       lineStyle: { width: 1.5, color: chartColors.quaternary, cap: 'round' as const },
@@ -783,6 +775,12 @@ const processChartOption = computed(() => ({
 
 // 生命周期 ====================
 
+// Snapshots replace the node; live ticks keep its identity. Start before replayed samples arrive.
+watch(nodeInfo, (node, previous) => {
+  if (node && previous?.uuid === node.uuid)
+    fetchData()
+}, { flush: 'sync' })
+
 watch(() => nodeInfo.value?.time, () => {
   const node = nodeInfo.value
   if (node)
@@ -790,13 +788,12 @@ watch(() => nodeInfo.value?.time, () => {
 })
 
 watch(selectedView, () => {
-  isInitialLoad.value = true // 切换视图时重置首次加载状态
+  remoteData.value = []
   fetchData()
 })
 
 watch(() => props.uuid, () => {
   remoteData.value = []
-  isInitialLoad.value = true // 切换节点时重置首次加载状态
   fetchData()
 })
 
@@ -826,12 +823,12 @@ onBeforeUnmount(() => fetchRequestId++)
       <div v-if="error" class="text-red-500 py-8 text-center">
         {{ error }}
       </div>
-      <div v-else-if="remoteData.length === 0 && !loading" class="py-8">
+      <div v-if="!error && remoteData.length === 0 && !loading" class="py-8">
         <Empty description="暂无负载数据" />
       </div>
 
       <!-- 图表网格 -->
-      <div v-else class="gap-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
+      <div v-else-if="remoteData.length > 0 || loading" class="gap-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
         <!-- CPU 卡片 -->
         <CardX
           size="small"

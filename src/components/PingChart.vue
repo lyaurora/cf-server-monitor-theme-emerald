@@ -12,9 +12,9 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useBackgroundSurface } from '@/composables/useBackgroundSurface'
 import { useAppStore } from '@/stores/app'
 import { useNodesStore } from '@/stores/nodes'
+import { fetchPingHistory } from '@/utils/api'
 import { DEFAULT_CHART_TIME_RANGE, getAvailableChartTimeRanges } from '@/utils/chartTimeRange'
 import { cutPeakValues } from '@/utils/recordHelper'
-import { getSharedRpc } from '@/utils/rpc'
 import '@/utils/echarts' // 共享 ECharts 配置
 
 const props = defineProps<{
@@ -26,8 +26,6 @@ const { pickSurfaceClass } = useBackgroundSurface()
 const nodesStore = useNodesStore()
 const nodeInfo = computed(() => nodesStore.nodesByUuid.get(props.uuid))
 const isDark = computed(() => appStore.isDark)
-// 使用共享的 RPC 实例，避免重复创建连接
-const rpc = getSharedRpc()
 
 // 图表主题相关颜色
 const chartThemeColors = computed(() => ({
@@ -80,25 +78,6 @@ interface TaskInfo {
   name: string
   interval?: number
   loss?: number
-  p99?: number
-  p50?: number
-  p99_p50_ratio?: number
-  min?: number
-  max?: number
-  avg?: number
-  latest?: number
-  total?: number
-  type?: string
-}
-
-interface PingRecordsResponse {
-  records: PingRecord[]
-  tasks?: TaskInfo[]
-}
-
-interface PingChartData {
-  records: PingRecord[]
-  tasks: TaskInfo[]
 }
 
 // 数据状态
@@ -118,19 +97,6 @@ const chartMargin = { top: 30, right: 24, bottom: 52, left: 56 }
 
 // ==================== 数据获取 ====================
 
-async function fetchHistoryRecords(uuid: string, hours: number): Promise<PingChartData> {
-  const result = await rpc.getClient().call<PingRecordsResponse>('common:getRecords', {
-    type: 'ping',
-    uuid,
-    hours,
-  })
-
-  return {
-    records: result?.records ?? [],
-    tasks: result?.tasks ?? [],
-  }
-}
-
 async function fetchRecords() {
   if (!props.uuid)
     return
@@ -138,22 +104,22 @@ async function fetchRecords() {
   const requestId = ++fetchRequestId
   const uuid = props.uuid
   const hours = selectedHours.value
+  const realtime = selectedView.value === DEFAULT_CHART_TIME_RANGE.label
   const previousRecords = new Set(remoteData.value)
 
   loading.value = true
   error.value = null
 
   try {
-    const result = await fetchHistoryRecords(uuid, hours)
+    const result = await fetchPingHistory(uuid, hours)
 
     if (requestId !== fetchRequestId)
       return
 
-    const liveRecords = selectedView.value === DEFAULT_CHART_TIME_RANGE.label
-      ? remoteData.value.filter(record => !previousRecords.has(record))
-      : []
-    remoteData.value = mergePingRecords([...result.records, ...liveRecords])
-    tasks.value = [...result.tasks, ...tasks.value.filter(task => liveRecords.some(record => record.task_id === task.id)
+    const liveRecords = realtime ? remoteData.value.filter(record => !previousRecords.has(record)) : []
+    // Keep real samples that the history endpoint has not persisted yet.
+    remoteData.value = mergePingRecords([...(realtime ? remoteData.value : []), ...result.records, ...liveRecords])
+    tasks.value = [...result.tasks, ...tasks.value.filter(task => remoteData.value.some(record => record.task_id === task.id)
       && !result.tasks.some(item => item.id === task.id))]
 
     if (selectAllTasks) {
@@ -165,8 +131,6 @@ async function fetchRecords() {
       return
 
     error.value = err instanceof Error ? err.message : '获取数据失败'
-    remoteData.value = []
-    tasks.value = []
   }
   finally {
     if (requestId === fetchRequestId) {
@@ -203,28 +167,9 @@ const mergedData = computed(() => {
     group[`timeout_${rec.task_id}`] = rec.value < 0
   }
 
-  const merged = Array.from(grouped.values()).sort(
+  return Array.from(grouped.values()).sort(
     (a, b) => (a.time as number) - (b.time as number),
   )
-
-  const hours = selectedHours.value
-  const lastItem = merged.at(-1)
-  const lastTs = lastItem ? lastItem.time as number : dayjs().valueOf()
-  const fromTs = lastTs - hours * 3600_000
-
-  let startIdx = 0
-  for (let i = 0; i < merged.length; i++) {
-    const item = merged[i]
-    if (!item)
-      continue
-    const ts = item.time as number
-    if (ts >= fromTs) {
-      startIdx = Math.max(0, i - 1)
-      break
-    }
-  }
-
-  return merged.slice(startIdx)
 })
 
 const chartData = computed(() => {
@@ -338,18 +283,17 @@ const latestValues = computed(() => {
     const safeIdx = Math.max(0, idx % chartColors.length)
     return {
       ...task,
-      min: latencyValues.length ? Math.min(...latencyValues) : finiteMetric(task.min),
-      max: latencyValues.length ? Math.max(...latencyValues) : finiteMetric(task.max),
-      avg: average(latencyValues) ?? finiteMetric(task.avg),
-      latest: latestRecord ? latest : finiteMetric(task.latest),
+      min: latencyValues.length ? Math.min(...latencyValues) : undefined,
+      max: latencyValues.length ? Math.max(...latencyValues) : undefined,
+      avg: average(latencyValues),
+      latest,
       timedOut: latestRecord !== undefined && latestRecord.value < 0,
-      p50: p50 ?? finiteMetric(task.p50),
-      p99: p99 ?? finiteMetric(task.p99),
-      p99_p50_ratio: p50 && p99 ? p99 / p50 : finiteMetric(task.p99_p50_ratio),
+      p50,
+      p99,
+      p99_p50_ratio: p50 && p99 ? p99 / p50 : undefined,
       interval: sampleIntervalSeconds(latencyRecords) ?? finiteMetric(task.interval),
       loss: average(lossValues) ?? finiteMetric(task.loss),
-      total: latencyRecords.length || finiteMetric(task.total),
-      latestValue: latestRecord ? latest ?? null : finiteMetric(task.latest) ?? null,
+      total: latencyRecords.length || undefined,
       color: chartColors[safeIdx]!,
     }
   })
@@ -615,6 +559,8 @@ const pingChartOption = computed(() => {
 watch(selectedView, () => {
   selectAllTasks = true
   selectedTaskIds.value = []
+  remoteData.value = []
+  tasks.value = []
   fetchRecords()
 })
 
@@ -625,6 +571,12 @@ watch(() => props.uuid, () => {
   selectedTaskIds.value = []
   fetchRecords()
 })
+
+// Snapshots replace the node; live ticks keep its identity. Start before replayed samples arrive.
+watch(nodeInfo, (node, previous) => {
+  if (node && previous?.uuid === node.uuid)
+    fetchRecords()
+}, { flush: 'sync' })
 
 watch(() => nodeInfo.value?.pingSample, (sample) => {
   if (sample)
@@ -676,11 +628,11 @@ onBeforeUnmount(() => fetchRequestId++)
       <div v-if="error" class="text-red-500 py-8 text-center">
         {{ error }}
       </div>
-      <div v-else-if="tasks.length === 0 && !loading" class="py-8">
+      <div v-if="!error && tasks.length === 0 && !loading" class="py-8">
         <Empty description="暂无延迟数据" />
       </div>
 
-      <template v-else>
+      <template v-else-if="tasks.length > 0 || loading">
         <!-- 最新值统计卡片（可点击切换选中状态） -->
         <div
           v-if="latestValues.length > 0" class="gap-3 grid"
@@ -741,10 +693,6 @@ onBeforeUnmount(() => fetchRequestId++)
                       <template v-if="task.interval !== undefined">
                         <span class="text-muted-foreground">间隔</span>
                         <span class="font-medium">{{ task.interval }}s</span>
-                      </template>
-                      <template v-if="task.type">
-                        <span class="text-muted-foreground">类型</span>
-                        <span class="font-medium">{{ task.type.toUpperCase() }}</span>
                       </template>
                       <template v-if="task.total !== undefined">
                         <span class="text-muted-foreground">总数</span>

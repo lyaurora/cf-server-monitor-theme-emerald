@@ -1,9 +1,10 @@
 import type { MaybeRefOrGetter } from 'vue'
 import type { PingHistoryPoint } from '@/stores/nodes'
+import type { PingLinePoint } from '@/utils/rpc'
 import { computed, toValue } from 'vue'
 import { PING_HISTORY_WINDOW_MS, useNodesStore } from '@/stores/nodes'
 
-export interface NodePingHistoryPoint extends PingHistoryPoint {
+export interface NodePingHistoryPoint extends PingHistoryPoint, PingLinePoint {
   /** Last actual sample in a run of equal values; raw samples remain in the store. */
   endTimeMs?: number
 }

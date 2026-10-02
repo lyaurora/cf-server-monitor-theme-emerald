@@ -11,11 +11,9 @@ import {
   cfRequest,
   fetchAllServers,
   fetchServer,
-  fetchSiteConfigs,
-  getDisplayUuid,
-  getRegisteredServerIds,
-  getServerSource,
-  getSharedApi,
+  fetchSiteConfig,
+  getPublicSettings,
+  invalidateHistoryRequests,
   isEnabledValue,
   mergeServerPingSample,
 } from '@/utils/api'
@@ -61,8 +59,6 @@ class InitManager {
   private socket: WebSocket | null = null
   private reconnectTimer: ReturnType<typeof setTimeout> | undefined
   private reconnectAttempts = 0
-  private timeoutTimer: ReturnType<typeof setTimeout> | undefined
-  private timeoutMinutes = 0
   private liveUpdateTimer: ReturnType<typeof setInterval> | null = null
   private pendingStatuses = new Map<string, NodeStatus>()
   private stopRouteWatch: WatchStopHandle | null = null
@@ -76,53 +72,48 @@ class InitManager {
 
   async init(): Promise<void> {
     try {
-      let configs = await fetchSiteConfigs()
+      let config = await fetchSiteConfig()
       if (this.destroyed)
         return
-      const first = configs[0]
-      if (first && isEnabledValue(first.turnstile_enabled) && !first.verified) {
-        if (!first.turnstile_site_key)
+      if (isEnabledValue(config.turnstile_enabled) && !config.verified) {
+        if (!config.turnstile_site_key)
           throw new Error('源站已启用 Turnstile，但未返回 Site Key')
-        const token = await requestTurnstileToken(first.turnstile_site_key)
+        const token = await requestTurnstileToken(config.turnstile_site_key)
         if (this.destroyed)
           return
         localStorage.setItem('turnstile_token', token)
-        await cfRequest('/api/config', 0)
+        await cfRequest('/api/config')
         if (this.destroyed)
           return
-        configs = await fetchSiteConfigs()
+        config = await fetchSiteConfig()
       }
       if (this.destroyed)
         return
 
-      const config = configs[0]
-      if (config?.site_title)
+      if (config.site_title)
         document.title = config.site_title
-      if (config && !isEnabledValue(config.is_public) && !config.authorization) {
+      if (!isEnabledValue(config.is_public) && !config.authorization) {
         window.location.href = buildAdminUrl()
         return
       }
 
-      const publicSettings = await getSharedApi().getPublicSettings()
+      const publicSettings = await getPublicSettings()
       if (this.destroyed)
         return
       this.appStore.publicSettings = publicSettings
-      this.appStore.updateLoginState(configs.some(item => item.authorization))
-      const minutes = Number(config?.frontend_ws_timeout_minutes)
-      this.timeoutMinutes = Number.isInteger(minutes) && minutes > 0 ? Math.min(minutes, 1440) : 0
+      this.appStore.updateLoginState(config.authorization)
       this.nodesStore.configurePingHistory({
-        points: config?.latency_window?.points,
-        hours: config?.latency_window?.hours,
+        points: config.latency_window?.points,
+        hours: config.latency_window?.hours,
       })
       await router.isReady()
       if (this.destroyed)
         return
       this.stopRouteWatch = watch(() => router.currentRoute.value.fullPath, this.reloadPage)
-      document.addEventListener('visibilitychange', this.onVisibilityChange)
       this.liveUpdateTimer = setInterval(() => {
         this.flushPendingStatuses()
-        // A paused or disconnected browser cannot infer outages from its stale snapshot.
-        if (this.nodesStore.wsConnectionState === 'connected')
+        // A disconnected browser cannot infer outages from its stale snapshot.
+        if (this.socket?.readyState === WebSocket.OPEN)
           this.nodesStore.refreshOnlineState()
       }, 1000)
       await this.refreshPage()
@@ -130,7 +121,6 @@ class InitManager {
     catch (error) {
       if (this.destroyed)
         return
-      this.appStore.connectionError = true
       throw error
     }
     finally {
@@ -143,33 +133,22 @@ class InitManager {
     void this.refreshPage().catch(error => console.error('[Live] Refresh failed:', error))
   }
 
-  private onVisibilityChange = (): void => {
-    if (document.hidden) {
-      this.revision++
-      this.closeSocket()
-      this.nodesStore.pageLoading = false
-    }
-    else {
-      this.reloadPage()
-    }
-  }
-
   async refreshPage(reconnectAttempt = 0): Promise<void> {
     const revision = ++this.revision
     this.closeSocket()
-    if (this.destroyed || document.hidden)
+    if (this.destroyed)
       return
     const uuid = this.activeUuid
     this.nodesStore.pageLoading = true
     try {
       if (uuid) {
-        const source = getServerSource(uuid)
         const server = await fetchServer(uuid)
         if (revision !== this.revision || this.destroyed)
           return
-        const { client, status } = adaptServer(server, source.apiIndex)
+        const { client, status } = adaptServer(server)
+        invalidateHistoryRequests()
         this.nodesStore.initNodes({ [client.uuid]: client }, { [client.uuid]: status }, false)
-        this.applyBatch(source.apiIndex, { type: 'batchUpdate', updates: server.latestReportUpdates }, source.serverId)
+        this.applyBatch({ type: 'batchUpdate', updates: server.latestReportUpdates }, uuid)
         this.flushPendingStatuses()
       }
       else {
@@ -179,22 +158,18 @@ class InitManager {
         this.nodesStore.configurePingHistory({
           showThreeNetDetails: sysConfig?.show_three_net_details === undefined || isEnabledValue(sysConfig.show_three_net_details),
         })
+        invalidateHistoryRequests()
         this.nodesStore.initNodes(clients, statuses)
-        for (const { apiIndex, updates } of latestReportUpdates)
-          this.applyBatch(apiIndex, { type: 'batchUpdate', updates })
+        this.applyBatch({ type: 'batchUpdate', updates: latestReportUpdates })
         this.flushPendingStatuses()
       }
       this.nodesStore.refreshOnlineState()
-      this.appStore.connectionError = false
-      if (!this.nodesStore.livePaused) {
-        this.reconnectAttempts = reconnectAttempt
-        this.connectSocket(uuid ? getServerSource(uuid).serverId : null, revision)
-      }
+      this.reconnectAttempts = reconnectAttempt
+      this.connectSocket(uuid, revision)
     }
     catch (error) {
       if (revision !== this.revision || this.destroyed)
         return
-      this.appStore.connectionError = true
       if (error instanceof ApiError && [401, 403, 404].includes(error.code ?? 0))
         this.nodesStore.clearNodes()
       else
@@ -207,8 +182,8 @@ class InitManager {
     }
   }
 
-  private applyLiveSample(apiIndex: number, sample: LiveSample): void {
-    const uuid = getDisplayUuid(apiIndex, sample.serverId)
+  private applyLiveSample(sample: LiveSample): void {
+    const uuid = sample.serverId
     const currentNode = this.nodesStore.nodesByUuid.get(uuid)
     const current = this.pendingStatuses.get(uuid) ?? currentNode
     const { client, status } = adaptServer({
@@ -216,7 +191,7 @@ class InitManager {
       ...sample.data,
       boot_time: normalizeSampleTimestamp(sample.data.boot_time, 0) || Date.parse(currentNode?.boot_time ?? ''),
       last_updated: sample.ts,
-    }, apiIndex)
+    })
 
     this.nodesStore.recordPingSample(uuid, status)
     if (current && sample.ts < Date.parse(current.time))
@@ -270,12 +245,7 @@ class InitManager {
       status.ping = mergeServerPingSample(sample.data, current.ping)
     }
 
-    this.queueNodeStatuses({ [uuid]: status })
-  }
-
-  private queueNodeStatuses(statuses: Record<string, NodeStatus>): void {
-    for (const [uuid, status] of Object.entries(statuses))
-      this.pendingStatuses.set(uuid, status)
+    this.pendingStatuses.set(uuid, status)
   }
 
   private flushPendingStatuses(): void {
@@ -283,16 +253,16 @@ class InitManager {
       return
     const statuses = Object.fromEntries(this.pendingStatuses)
     this.pendingStatuses.clear()
-    this.nodesStore.updateNodeStatuses(statuses, false)
+    this.nodesStore.updateNodeStatuses(statuses)
   }
 
-  private applyBatch(apiIndex: number, message: WsMessage, serverId: string | null = null): void {
+  private applyBatch(message: WsMessage, serverId: string | null = null): void {
     for (const update of Array.isArray(message.updates) ? message.updates : []) {
       if (!update || typeof update.serverId !== 'string')
         continue
       if (serverId && update.serverId !== serverId)
         continue
-      const uuid = getDisplayUuid(apiIndex, update.serverId)
+      const uuid = update.serverId
       if (!this.nodesStore.nodesByUuid.has(uuid))
         continue
       const samples = (Array.isArray(update.samples) ? update.samples : []).flatMap((sample) => {
@@ -308,12 +278,12 @@ class InitManager {
         }]
       }).sort((a, b) => a.ts - b.ts)
       for (const sample of samples)
-        this.applyLiveSample(apiIndex, sample)
+        this.applyLiveSample(sample)
     }
   }
 
   private connectSocket(serverId: string | null, revision: number): void {
-    if (this.destroyed || document.hidden || this.nodesStore.livePaused || revision !== this.revision)
+    if (this.destroyed || revision !== this.revision)
       return
     const url = new URL('/api/ws', window.location.origin)
     url.searchParams.set('subscribe', serverId ?? 'all')
@@ -321,7 +291,6 @@ class InitManager {
     const socket = new WebSocket(url)
     this.socket = socket
     const isCurrent = () => !this.destroyed && revision === this.revision && this.socket === socket
-    this.nodesStore.updateWsState(this.reconnectAttempts ? 'reconnecting' : 'connecting', this.reconnectAttempts)
 
     socket.addEventListener('open', () => {
       if (!isCurrent())
@@ -331,17 +300,8 @@ class InitManager {
       socket.send(JSON.stringify({
         type: 'subscribe',
         scope: serverId ?? 'all',
-        ids: serverId ? [serverId] : getRegisteredServerIds(0),
+        ids: serverId ? [serverId] : this.nodesStore.nodes.map(node => node.uuid),
       }))
-      this.nodesStore.updateWsState('connected', 0)
-      if (this.timeoutMinutes > 0) {
-        this.timeoutTimer = setTimeout(() => {
-          if (!isCurrent())
-            return
-          this.nodesStore.livePaused = true
-          this.closeSocket()
-        }, this.timeoutMinutes * 60_000)
-      }
     })
     socket.addEventListener('message', (event) => {
       if (!isCurrent())
@@ -354,13 +314,11 @@ class InitManager {
         return
       }
       if (message?.type === 'batchUpdate')
-        this.applyBatch(0, message, serverId)
+        this.applyBatch(message, serverId)
     })
     socket.addEventListener('close', () => {
       if (!isCurrent())
         return
-      clearTimeout(this.timeoutTimer)
-      this.timeoutTimer = undefined
       this.socket = null
       this.scheduleReconnect(revision, this.reconnectAttempts + 1)
     })
@@ -368,10 +326,9 @@ class InitManager {
   }
 
   private scheduleReconnect(revision: number, attempts: number): void {
-    if (this.destroyed || document.hidden || this.nodesStore.livePaused || revision !== this.revision)
+    if (this.destroyed || revision !== this.revision)
       return
     this.reconnectAttempts = attempts
-    this.nodesStore.updateWsState('reconnecting', attempts)
     const delay = Math.min(30_000, 1000 * 2 ** Math.min(attempts, 5))
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = undefined
@@ -387,22 +344,13 @@ class InitManager {
     clearTimeout(this.reconnectTimer)
     this.reconnectTimer = undefined
     this.reconnectAttempts = 0
-    clearTimeout(this.timeoutTimer)
-    this.timeoutTimer = undefined
     this.flushPendingStatuses()
-    this.nodesStore.updateWsState('disconnected', 0)
-  }
-
-  async resume(): Promise<void> {
-    this.nodesStore.livePaused = false
-    await this.refreshPage()
   }
 
   destroy(): void {
     this.destroyed = true
     this.revision++
     this.stopRouteWatch?.()
-    document.removeEventListener('visibilitychange', this.onVisibilityChange)
     this.closeSocket()
     if (this.liveUpdateTimer)
       clearInterval(this.liveUpdateTimer)
@@ -421,8 +369,4 @@ export async function initApp(): Promise<void> {
 export function destroyInitManager(): void {
   initManager?.destroy()
   initManager = null
-}
-
-export async function resumeLiveUpdates(): Promise<void> {
-  await initManager?.resume()
 }

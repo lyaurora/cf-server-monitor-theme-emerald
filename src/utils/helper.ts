@@ -61,40 +61,8 @@ export function formatBytes(bytes: number, decimals = 1): string {
  * @returns 格式化后的字符串，如 "1.5 GB"
  */
 export function formatBytesWithConfig(bytes: number, config?: ByteDecimalsConfig): string {
-  const mergedConfig = { ...DEFAULT_BYTE_DECIMALS, ...config }
-
-  if (bytes === 0) {
-    // 0 字节时，检查 B 是否被禁用
-    if (mergedConfig.B === -1)
-      return '0 KB'
-    return '0 B'
-  }
-
-  const k = 1024
-  const i = Math.floor(Math.log(bytes) / Math.log(k))
-
-  // 获取对应单位的精度配置
-  const unitKey = BYTE_UNITS[i]
-  // PB 及以上单位使用 TB 的精度配置
-  const decimals = (unitKey === 'TB' || unitKey === 'PB') ? mergedConfig.TB : mergedConfig[unitKey as keyof ByteDecimalsConfig]
-
-  // 如果当前单位被禁用，向上查找可用单位
-  if (decimals === -1) {
-    for (let j = i + 1; j < BYTE_UNITS.length; j++) {
-      const nextUnitKey = BYTE_UNITS[j]
-      const nextDecimals = (nextUnitKey === 'TB' || nextUnitKey === 'PB') ? mergedConfig.TB : mergedConfig[nextUnitKey as keyof ByteDecimalsConfig]
-      if (nextDecimals !== -1) {
-        const unit = BYTE_UNITS[j]
-        return `${(bytes / k ** j).toFixed(nextDecimals)} ${unit}`
-      }
-    }
-    // 所有单位都被禁用，使用默认行为
-    const unit = BYTE_UNITS[i] ?? LAST_BYTE_UNIT
-    return `${(bytes / k ** i).toFixed(1)} ${unit}`
-  }
-
-  const unit = BYTE_UNITS[i] ?? LAST_BYTE_UNIT
-  return `${(bytes / k ** i).toFixed(decimals)} ${unit}`
+  const { value, unit } = formatBytesSplit(bytes, config)
+  return `${value} ${unit}`
 }
 
 /**
@@ -147,15 +115,6 @@ export function formatBytesPerSecondSplit(bytes: number, config?: ByteDecimalsCo
 }
 
 /**
- * 格式化字节速率为可读单位
- * @param bytes 字节速率
- * @returns 格式化后的字符串，如 "1.5 GB/s"
- */
-export function formatBytesPerSecond(bytes: number): string {
-  return `${formatBytes(bytes)}/s`
-}
-
-/**
  * 格式化字节速率为可读单位（支持自定义精度配置）
  * @param bytes 字节速率
  * @param config 精度配置
@@ -163,29 +122,6 @@ export function formatBytesPerSecond(bytes: number): string {
  */
 export function formatBytesPerSecondWithConfig(bytes: number, config?: ByteDecimalsConfig): string {
   return `${formatBytesWithConfig(bytes, config)}/s`
-}
-
-/**
- * 格式化运行时间
- * @param seconds 秒数
- * @returns 格式化后的字符串，如 "2 天 3 小时 15 分钟"
- */
-export function formatUptime(seconds: number): string {
-  if (!seconds || seconds <= 0)
-    return '0 秒'
-
-  const parts: string[] = []
-  let remaining = seconds
-
-  for (const { value, label } of TIME_UNITS) {
-    const amount = Math.floor(remaining / value)
-    if (amount > 0) {
-      parts.push(`${amount} ${label}`)
-      remaining %= value
-    }
-  }
-
-  return parts.length > 0 ? parts.join(' ') : '0 秒'
 }
 
 /**
@@ -238,18 +174,6 @@ export function formatUptimeWithFormat(seconds: number, format: UptimeFormat = '
   }
 
   return parts.join(' ')
-}
-
-/**
- * 计算占用百分比
- * @param used 已使用量
- * @param total 总量
- * @returns 百分比（0-100）
- */
-export function calcPercentage(used: number, total: number): number {
-  if (total === 0)
-    return 0
-  return (used / total) * 100
 }
 
 /** 状态阈值配置 */

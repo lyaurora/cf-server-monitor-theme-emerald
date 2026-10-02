@@ -1,11 +1,8 @@
-import type { Client, NodeStatus, NodeStatusPing, PingSample, PingWindowPoint } from '@/utils/rpc'
+import type { Client, NodeStatus, PingSample, PingWindowPoint } from '@/utils/rpc'
 import { useNow } from '@vueuse/core'
 import { defineStore } from 'pinia'
 import { computed, ref, shallowReactive } from 'vue'
 import { parseNodeGroups } from '@/utils/groupHelper'
-
-/** 流量限制类型 */
-export type TrafficLimitType = 'up' | 'down' | 'min' | 'max' | 'sum'
 
 export interface PingHistoryPoint extends PingWindowPoint {
   /** Parse once on ingestion; all history calculations use milliseconds. */
@@ -15,103 +12,13 @@ export interface PingHistoryPoint extends PingWindowPoint {
 export const PING_HISTORY_WINDOW_MS = 2 * 3_600_000
 
 /** 节点完整信息（合并 Client 和 Status） */
-export interface NodeData {
-  uuid: string
-  source_id?: string
-  source_index?: number
-  // Client 信息
-  name: string
-  cpu_name: string
-  virtualization: string
-  kernel_version: string
-  arch: string
-  cpu_cores: number
-  os: string
-  boot_time: string
-  gpu_name?: string
-  gpu_info?: string
-  ipv4?: string
-  ipv6?: string
-  region: string
-  remark?: string
-  public_remark: string
-  mem_total: number
-  swap_total: number | null
-  disk_total: number
-  version?: string
-  weight: number
-  price: number
-  price_configured?: boolean
-  billing_cycle: number
-  auto_renewal: boolean
-  currency: string
-  expired_at: string
-  group: string
-  tags: string
-  hidden: boolean
-  showPrice: boolean
-  showExpire: boolean
-  showTraffic: boolean
-  traffic_limit: number
-  traffic_limit_type: TrafficLimitType
-  created_at: string
-  updated_at: string
-  // Status 信息
-  online: boolean
-  time: string
-  cpu: number
-  gpu: number
-  ram: number
-  swap: number | null
-  load: number
-  load5: number
-  load15: number
-  temp: number
-  disk: number
-  net_in: number
-  net_out: number
-  net_total_up: number
-  net_total_down: number
-  net_monthly_up: number
-  net_monthly_down: number
-  process: number
-  connections: number
-  connections_udp: number
-  uptime: number
-  ping?: Record<string, NodeStatusPing>
+export interface NodeData extends Client, StatusData {
   pingSample?: PingSample
 }
 
-/** WebSocket 连接状态 */
-export type WsConnectionState = 'disconnected' | 'connecting' | 'connected' | 'reconnecting'
-
 /** 状态数据（用于更新） */
-interface StatusData {
+interface StatusData extends Omit<NodeStatus, 'client' | 'ram_total' | 'pingWindow'> {
   mem_total: number
-  disk_total: number
-  swap_total: number | null
-  online: boolean
-  time: string
-  cpu: number
-  gpu: number
-  ram: number
-  swap: number | null
-  load: number
-  load5: number
-  load15: number
-  temp: number
-  disk: number
-  net_in: number
-  net_out: number
-  net_total_up: number
-  net_total_down: number
-  net_monthly_up: number
-  net_monthly_down: number
-  process: number
-  connections: number
-  connections_udp: number
-  uptime: number
-  ping?: Record<string, NodeStatusPing>
 }
 
 const EARTH_SNAPSHOT_INTERVAL_MS = 60_000
@@ -140,20 +47,11 @@ const useNodesStore = defineStore('nodes', () => {
   // Histories are replaced as snapshots; only track each node's array, not every sample field.
   const pingHistoryByUuid = shallowReactive<Record<string, PingHistoryPoint[]>>(Object.create(null))
   const pingNow = useNow({ interval: 60_000 })
-  const wsConnectionState = ref<WsConnectionState>('disconnected')
-  const wsReconnectAttempts = ref<number>(0)
-  const livePaused = ref(false)
   const pageLoading = ref(false)
   const pingHistoryConfig = ref<PingHistoryConfig>({ ...PING_HISTORY_DEFAULTS })
   let lastEarthSnapshotAt = 0
 
   // ===== 计算属性 =====
-  /** 在线节点数量 */
-  const onlineCount = computed(() => nodes.value.filter(n => n.online).length)
-
-  /** 总节点数量 */
-  const totalCount = computed(() => nodes.value.length)
-
   /** 所有分组 */
   const groups = computed(() => {
     const groupSet = new Set<string>()
@@ -183,45 +81,7 @@ const useNodesStore = defineStore('nodes', () => {
    */
   function createNodeFromClient(client: Client): NodeData {
     return {
-      uuid: client.uuid,
-      source_id: client.source_id,
-      source_index: client.source_index,
-      name: client.name,
-      cpu_name: client.cpu_name,
-      virtualization: client.virtualization,
-      kernel_version: client.kernel_version,
-      arch: client.arch,
-      cpu_cores: client.cpu_cores,
-      os: client.os,
-      boot_time: client.boot_time,
-      gpu_name: client.gpu_name,
-      gpu_info: client.gpu_info,
-      ipv4: client.ipv4,
-      ipv6: client.ipv6,
-      region: client.region,
-      remark: client.remark,
-      public_remark: client.public_remark,
-      mem_total: client.mem_total,
-      swap_total: client.swap_total,
-      disk_total: client.disk_total,
-      version: client.version,
-      weight: client.weight,
-      price: client.price,
-      price_configured: client.price_configured,
-      billing_cycle: client.billing_cycle,
-      auto_renewal: client.auto_renewal,
-      currency: client.currency,
-      expired_at: client.expired_at,
-      group: client.group,
-      tags: client.tags,
-      hidden: client.hidden,
-      showPrice: client.showPrice,
-      showExpire: client.showExpire,
-      showTraffic: client.showTraffic,
-      traffic_limit: client.traffic_limit,
-      traffic_limit_type: client.traffic_limit_type as TrafficLimitType,
-      created_at: client.created_at,
-      updated_at: client.updated_at,
+      ...client,
       // Status 默认值
       online: false,
       time: '',
@@ -245,40 +105,6 @@ const useNodesStore = defineStore('nodes', () => {
       connections_udp: 0,
       uptime: 0,
       ping: undefined,
-    }
-  }
-
-  /**
-   * 更新节点的状态数据
-   */
-  function updateNodeStatus(node: NodeData, status: StatusData): NodeData {
-    return {
-      ...node,
-      online: status.online,
-      time: status.time,
-      cpu: status.cpu,
-      gpu: status.gpu,
-      ram: status.ram,
-      mem_total: status.mem_total,
-      disk_total: status.disk_total,
-      swap: status.swap,
-      swap_total: status.swap_total,
-      load: status.load,
-      load5: status.load5,
-      load15: status.load15,
-      temp: status.temp,
-      disk: status.disk,
-      net_in: status.net_in,
-      net_out: status.net_out,
-      net_total_up: status.net_total_up,
-      net_total_down: status.net_total_down,
-      net_monthly_up: status.net_monthly_up,
-      net_monthly_down: status.net_monthly_down,
-      process: status.process,
-      connections: status.connections,
-      connections_udp: status.connections_udp,
-      uptime: status.uptime,
-      ping: status.ping,
     }
   }
 
@@ -364,11 +190,7 @@ const useNodesStore = defineStore('nodes', () => {
         : previous?.loss ?? null
       lines[key] = { latency: loss === 100 ? null : latency, loss }
     }
-    const average = (metric: 'latency' | 'loss') => {
-      const values = Object.values(lines).flatMap(line => line[metric] === null ? [] : [line[metric]])
-      return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null
-    }
-    const point = { time: status.time, timeMs: sampleTime, latency: average('latency'), loss: average('loss'), lines }
+    const point = { time: status.time, timeMs: sampleTime, lines }
     const cutoff = Date.now() - PING_HISTORY_WINDOW_MS - pingHistoryBucketMs() * 4
     if (append) {
       let start = 0
@@ -417,7 +239,6 @@ const useNodesStore = defineStore('nodes', () => {
    */
   function initNodes(clients: Record<string, Client>, statuses: Record<string, NodeStatus>, replace = true): void {
     const uuids = Object.keys(clients)
-    const existingUuids = new Set(nodes.value.map(n => n.uuid))
 
     // 更新现有节点或添加新节点
     uuids.forEach((uuid) => {
@@ -428,21 +249,14 @@ const useNodesStore = defineStore('nodes', () => {
       const status = statuses[uuid]
       const index = nodes.value.findIndex(n => n.uuid === uuid)
 
-      if (existingUuids.has(uuid) && index !== -1) {
-        // 更新现有节点
-        const baseNode = createNodeFromClient(client)
-        nodes.value[index] = status
-          ? updateNodeStatus(baseNode, extractStatusData(status))
-          : baseNode
+      const node = {
+        ...createNodeFromClient(client),
+        ...(status ? extractStatusData(status) : {}),
       }
-      else {
-        // 添加新节点
-        const newNode = createNodeFromClient(client)
-        nodes.value.push(status
-          ? updateNodeStatus(newNode, extractStatusData(status))
-          : newNode,
-        )
-      }
+      if (index !== -1)
+        nodes.value[index] = node
+      else
+        nodes.value.push(node)
 
       if (status) {
         // 开关开启且后端返回窗口时直接作为历史（已含最新桶），
@@ -467,7 +281,7 @@ const useNodesStore = defineStore('nodes', () => {
       }
     }
 
-    // 按 weight 降序排序（weight 越大越靠前）
+    // 按 weight 升序排序（weight 越小越靠前）
     sortNodesByWeight()
     refreshEarthNodes(true)
   }
@@ -482,7 +296,7 @@ const useNodesStore = defineStore('nodes', () => {
   /**
    * 更新节点状态（实时更新）
    */
-  function updateNodeStatuses(statuses: Record<string, NodeStatus>, trackPing = true): void {
+  function updateNodeStatuses(statuses: Record<string, NodeStatus>): void {
     let hasChanges = false
 
     nodes.value.forEach((node) => {
@@ -495,87 +309,11 @@ const useNodesStore = defineStore('nodes', () => {
 
       // Preserve node identity so resource ticks do not invalidate filtered lists.
       Object.assign(node, extractStatusData(status))
-      if (trackPing)
-        recordPingSample(node.uuid, status)
       hasChanges = true
     })
 
     if (hasChanges)
       refreshEarthNodes()
-  }
-
-  /**
-   * 更新节点基本信息
-   */
-  function updateNodeClients(clients: Record<string, Client>): void {
-    const newUuids = new Set(Object.keys(clients))
-
-    // 更新现有节点信息或添加新节点
-    Object.entries(clients).forEach(([uuid, client]) => {
-      const index = nodes.value.findIndex(n => n.uuid === uuid)
-
-      if (index !== -1) {
-        // 更新现有节点，保留状态信息
-        const currentNode = nodes.value[index]
-        if (!currentNode)
-          return
-
-        const baseNode = createNodeFromClient(client)
-        nodes.value[index] = updateNodeStatus(baseNode, {
-          mem_total: client.mem_total,
-          disk_total: client.disk_total,
-          online: currentNode.online,
-          time: currentNode.time,
-          cpu: currentNode.cpu,
-          gpu: currentNode.gpu,
-          ram: currentNode.ram,
-          swap: currentNode.swap,
-          swap_total: client.swap_total ?? currentNode.swap_total,
-          load: currentNode.load,
-          load5: currentNode.load5,
-          load15: currentNode.load15,
-          temp: currentNode.temp,
-          disk: currentNode.disk,
-          net_in: currentNode.net_in,
-          net_out: currentNode.net_out,
-          net_total_up: currentNode.net_total_up,
-          net_total_down: currentNode.net_total_down,
-          net_monthly_up: currentNode.net_monthly_up,
-          net_monthly_down: currentNode.net_monthly_down,
-          process: currentNode.process,
-          connections: currentNode.connections,
-          connections_udp: currentNode.connections_udp,
-          uptime: currentNode.uptime,
-          ping: currentNode.ping,
-        })
-      }
-      else {
-        // 添加新节点（不带状态）
-        nodes.value.push(createNodeFromClient(client))
-      }
-    })
-
-    // 移除不存在的节点
-    for (let i = nodes.value.length - 1; i >= 0; i--) {
-      const node = nodes.value[i]
-      if (node && !newUuids.has(node.uuid)) {
-        nodes.value.splice(i, 1)
-      }
-    }
-
-    // 按 weight 降序排序
-    sortNodesByWeight()
-    refreshEarthNodes(true)
-  }
-
-  /**
-   * 更新 WebSocket 连接状态
-   */
-  function updateWsState(state: WsConnectionState, attempts?: number): void {
-    wsConnectionState.value = state
-    if (attempts !== undefined) {
-      wsReconnectAttempts.value = attempts
-    }
   }
 
   /**
@@ -595,13 +333,8 @@ const useNodesStore = defineStore('nodes', () => {
     pingHistoryByUuid,
     pingNow,
     pingSampleIntervalMs,
-    wsConnectionState,
-    wsReconnectAttempts,
-    livePaused,
     pageLoading,
     // 计算属性
-    onlineCount,
-    totalCount,
     groups,
     nodesByUuid,
     showThreeNetDetails,
@@ -611,9 +344,7 @@ const useNodesStore = defineStore('nodes', () => {
     refreshOnlineState,
     recordPingSample,
     configurePingHistory,
-    updateNodeClients,
     sortNodesByWeight,
-    updateWsState,
     clearNodes,
   }
 })

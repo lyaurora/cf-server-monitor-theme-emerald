@@ -286,7 +286,7 @@ const trafficProgressStyle = computed(() => ({
         </Button>
         <div class="text-lg font-bold flex gap-2 items-center">
           <img
-            :src="getApiAssetUrl(`flags/${getRegionCode(data.region).toLowerCase()}.svg`, data.source_index)" :alt="getRegionDisplayName(data.region)"
+            :src="getApiAssetUrl(`flags/${getRegionCode(data.region).toLowerCase()}.svg`)" :alt="getRegionDisplayName(data.region)"
             class="size-6 rounded-sm drop-shadow-[0_0_2px_rgba(0,0,0,0.1)]"
           >
           <span>{{ data.name }}</span>
@@ -362,7 +362,7 @@ const trafficProgressStyle = computed(() => ({
               </div>
               <div class="flex min-w-0 gap-2 items-center">
                 <img
-                  v-if="item.label === '操作系统'" :src="getOSImage(data.os, data.source_index)" :alt="getOSName(data.os)"
+                  v-if="item.label === '操作系统'" :src="getOSImage(data.os)" :alt="getOSName(data.os)"
                   class="size-5 shrink-0"
                 >
                 <span class="text-xs sm:text-sm break-all">

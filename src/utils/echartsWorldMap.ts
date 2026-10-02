@@ -15,8 +15,7 @@ const WORLD_GEO_JSON_URLS = [
   'https://gcore.jsdelivr.net/gh/apache/echarts-www@master/asset/map/json/world.json',
   'https://raw.githubusercontent.com/apache/echarts-www/master/asset/map/json/world.json',
 ]
-const WORLD_MAP_CACHE_KEY_PREFIX = 'cf-server-monitor-theme-emerald:world-map'
-const WORLD_MAP_CACHE_KEY = `${WORLD_MAP_CACHE_KEY_PREFIX}` // :${__BUILD_GIT_HASH__}
+const WORLD_MAP_CACHE_KEY = 'cf-server-monitor-theme-emerald:world-map'
 
 const ECHARTS_WORLD_NAME_TO_CODE: Record<string, string> = {
   'aland': 'AX',
@@ -77,7 +76,7 @@ function pruneStaleWorldMapCache(): void {
   try {
     for (let index = window.localStorage.length - 1; index >= 0; index -= 1) {
       const key = window.localStorage.key(index)
-      if (!key?.startsWith(WORLD_MAP_CACHE_KEY_PREFIX) || key === WORLD_MAP_CACHE_KEY)
+      if (!key?.startsWith(WORLD_MAP_CACHE_KEY) || key === WORLD_MAP_CACHE_KEY)
         continue
       window.localStorage.removeItem(key)
     }
@@ -116,7 +115,6 @@ function writeCachedWorldGeoJson(worldGeoJson: WorldGeoJson): void {
     window.localStorage.setItem(
       WORLD_MAP_CACHE_KEY,
       JSON.stringify({
-        buildHash: __BUILD_GIT_HASH__,
         data: worldGeoJson,
       }),
     )

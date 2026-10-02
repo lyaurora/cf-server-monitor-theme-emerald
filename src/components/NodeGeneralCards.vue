@@ -137,24 +137,18 @@ const formattedMonthlyAverageCost = computed(() => {
 const financeSummaryItems = computed(() => [
   {
     label: '总价值',
-    icon: 'tabler:wallet',
     value: formattedTotalValue.value.value,
     symbol: formattedTotalValue.value.symbol,
-    currency: formattedTotalValue.value.currency,
   },
   {
     label: '月均支出',
-    icon: 'tabler:receipt-2',
     value: formattedMonthlyAverageCost.value.value,
     symbol: formattedMonthlyAverageCost.value.symbol,
-    currency: `${formattedMonthlyAverageCost.value.currency}/月`,
   },
   {
     label: '剩余价值',
-    icon: 'tabler:coins',
     value: formattedRemainingValue.value.value,
     symbol: formattedRemainingValue.value.symbol,
-    currency: formattedRemainingValue.value.currency,
   },
 ].filter(item => item.label !== '剩余价值' || remainingValueNodes.value.length > 0))
 const financeHeadline = computed(() => remainingValueNodes.value.length ? formattedRemainingValue.value : formattedMonthlyAverageCost.value)
@@ -165,8 +159,6 @@ const exchangeRateRows = computed(() => financeRateCurrencies.map((currency) => 
 
   return {
     currency,
-    baseCurrency: exchangeRateBaseCurrency.value,
-    baseSymbol: financeHelper.CURRENCY_SYMBOLS[exchangeRateBaseCurrency.value],
     targetSymbol: financeHelper.CURRENCY_SYMBOLS[currency],
     rate: new Intl.NumberFormat('zh-CN', {
       maximumFractionDigits: 6,
