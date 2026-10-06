@@ -3,8 +3,7 @@ import type { RecordFormat } from '@/utils/recordHelper'
 import type { StatusRecord } from '@/utils/rpc'
 import { Icon } from '@iconify/vue'
 import dayjs from 'dayjs'
-import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
-import VChart from 'vue-echarts'
+import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import { CardX } from '@/components/ui/card-x'
 import { Empty } from '@/components/ui/empty'
 import { Spinner } from '@/components/ui/spinner'
@@ -16,11 +15,12 @@ import { fetchLoadHistory } from '@/utils/api'
 import { DEFAULT_CHART_TIME_RANGE, getAvailableChartTimeRanges } from '@/utils/chartTimeRange'
 import { formatBytes, formatBytesSplit } from '@/utils/helper'
 import { fillMissingTimePoints } from '@/utils/recordHelper'
-import '@/utils/echarts' // 共享 ECharts 配置
 
 const props = defineProps<{
   uuid: string
 }>()
+
+const VChart = defineAsyncComponent(() => import('@/utils/echarts'))
 
 const appStore = useAppStore()
 const { pickSurfaceClass } = useBackgroundSurface()

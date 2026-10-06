@@ -1,6 +1,7 @@
 import type { WatchStopHandle } from 'vue'
 import type { NodeStatus } from '@/utils/rpc'
 import { watch } from 'vue'
+import { toast } from 'vue-sonner'
 import router from '@/router'
 import { useAppStore } from '@/stores/app'
 import { useNodesStore } from '@/stores/nodes'
@@ -18,6 +19,8 @@ import {
   mergeServerPingSample,
 } from '@/utils/api'
 import { requestTurnstileToken } from '@/utils/turnstile'
+
+const CONNECTION_NOTICE_DELAY_MS = 30_000
 
 interface WsMessage {
   type: string
@@ -64,6 +67,9 @@ class InitManager {
   private stopRouteWatch: WatchStopHandle | null = null
   private revision = 0
   private destroyed = false
+  private connectionIssue: 'retrying' | 'failed' | null = null
+  private connectionFailedAt: number | null = null
+  private connectionNoticeId: string | number | undefined
 
   private get activeUuid(): string | null {
     const route = router.currentRoute.value
@@ -71,6 +77,7 @@ class InitManager {
   }
 
   async init(): Promise<void> {
+    document.addEventListener('visibilitychange', this.handleVisibilityChange)
     try {
       let config = await fetchSiteConfig()
       if (this.destroyed)
@@ -121,6 +128,9 @@ class InitManager {
     catch (error) {
       if (this.destroyed)
         return
+      // Failures before page setup have no automatic retry path.
+      if (!this.stopRouteWatch)
+        this.reportConnectionIssue('failed')
       throw error
     }
     finally {
@@ -130,6 +140,7 @@ class InitManager {
   }
 
   private reloadPage = (): void => {
+    this.clearConnectionNotice()
     void this.refreshPage().catch(error => console.error('[Live] Refresh failed:', error))
   }
 
@@ -170,10 +181,16 @@ class InitManager {
     catch (error) {
       if (revision !== this.revision || this.destroyed)
         return
-      if (error instanceof ApiError && [401, 403, 404].includes(error.code ?? 0))
+      if (error instanceof ApiError && [401, 403, 404].includes(error.code ?? 0)) {
         this.nodesStore.clearNodes()
-      else
+        this.clearConnectionNotice()
+        // Missing nodes already have an empty state; access failures need an action.
+        if (error.code !== 404)
+          this.reportConnectionIssue('failed')
+      }
+      else {
         this.scheduleReconnect(revision, reconnectAttempt + 1)
+      }
       throw error
     }
     finally {
@@ -295,6 +312,8 @@ class InitManager {
     socket.addEventListener('open', () => {
       if (!isCurrent())
         return
+      // A fresh HTTP snapshot and an open socket confirm recovery together.
+      this.clearConnectionNotice()
       this.reconnectAttempts = 0
       // Explicit subscription also asks the backend to resume fast agent reports.
       socket.send(JSON.stringify({
@@ -328,6 +347,7 @@ class InitManager {
   private scheduleReconnect(revision: number, attempts: number): void {
     if (this.destroyed || revision !== this.revision)
       return
+    this.reportConnectionIssue('retrying')
     this.reconnectAttempts = attempts
     const delay = Math.min(30_000, 1000 * 2 ** Math.min(attempts, 5))
     this.reconnectTimer = setTimeout(() => {
@@ -335,6 +355,49 @@ class InitManager {
       if (!this.destroyed && revision === this.revision)
         void this.refreshPage(attempts).catch(error => console.error('[Live] Reconnect failed:', error))
     }, delay)
+  }
+
+  private reportConnectionIssue(issue: 'retrying' | 'failed'): void {
+    if (this.connectionIssue !== issue)
+      this.clearConnectionNotice()
+    this.connectionIssue = issue
+    this.connectionFailedAt ??= performance.now()
+    // Keep the ID after manual dismissal: one notice per uninterrupted failure.
+    if (document.hidden || this.connectionNoticeId !== undefined)
+      return
+    const retrying = issue === 'retrying'
+    // Require a failed retry after the grace period, not just elapsed time.
+    if (retrying && performance.now() - this.connectionFailedAt < CONNECTION_NOTICE_DELAY_MS)
+      return
+    this.connectionNoticeId = toast.warning(retrying ? '实时连接暂时中断' : '暂时无法加载数据', {
+      description: retrying
+        ? '正在重连，数据可能延迟。'
+        : '请检查网络或权限后重试。',
+      class: 'connection-notice',
+      richColors: false,
+      duration: Number.POSITIVE_INFINITY,
+      action: { label: '刷新页面', onClick: () => window.location.reload() },
+    })
+  }
+
+  private clearConnectionNotice(): void {
+    this.connectionFailedAt = null
+    if (this.connectionNoticeId !== undefined)
+      toast.dismiss(this.connectionNoticeId)
+    this.connectionNoticeId = undefined
+    this.connectionIssue = null
+  }
+
+  private handleVisibilityChange = (): void => {
+    // Returning from the background starts a fresh grace period.
+    this.connectionFailedAt = null
+    if (document.hidden) {
+      if (this.connectionNoticeId !== undefined)
+        toast.dismiss(this.connectionNoticeId)
+    }
+    else if (this.connectionIssue) {
+      this.reportConnectionIssue(this.connectionIssue)
+    }
   }
 
   private closeSocket(): void {
@@ -350,6 +413,8 @@ class InitManager {
   destroy(): void {
     this.destroyed = true
     this.revision++
+    document.removeEventListener('visibilitychange', this.handleVisibilityChange)
+    this.clearConnectionNotice()
     this.stopRouteWatch?.()
     this.closeSocket()
     if (this.liveUpdateTimer)

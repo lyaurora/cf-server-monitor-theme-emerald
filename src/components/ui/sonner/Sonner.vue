@@ -40,3 +40,28 @@ const props = defineProps<ToasterProps>()
     </template>
   </Sonner>
 </template>
+
+<style>
+@reference '../../../styles/main.css';
+
+.toaster[data-sonner-toaster] .connection-notice {
+  @apply gap-3 rounded-md border-0 bg-background/50 pr-10 text-foreground shadow-[0_0_20px,0_0_0_1px] shadow-emerald-600/10 backdrop-blur-lg;
+}
+
+.toaster[data-sonner-toaster] .connection-notice [data-description] {
+  @apply text-muted-foreground;
+}
+
+.toaster[data-sonner-toaster] .connection-notice [data-icon] {
+  @apply text-amber-600 dark:text-amber-400;
+}
+
+.toaster[data-sonner-toaster] .connection-notice [data-button] {
+  @apply h-8 rounded-md border border-border bg-transparent text-foreground transition-colors hover:bg-accent hover:text-accent-foreground;
+}
+
+.toaster[data-sonner-toaster] .connection-notice [data-close-button] {
+  @apply top-2 right-2 left-auto size-6 rounded-sm border-0 bg-transparent text-muted-foreground hover:bg-accent hover:text-foreground;
+  transform: none;
+}
+</style>

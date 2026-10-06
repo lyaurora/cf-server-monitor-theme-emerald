@@ -2,8 +2,7 @@
 import type { PingRecord, PingSample } from '@/utils/rpc'
 import { Icon } from '@iconify/vue'
 import dayjs from 'dayjs'
-import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
-import VChart from 'vue-echarts'
+import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import { Button } from '@/components/ui/button'
 import { DataTooltip } from '@/components/ui/data-tooltip'
 import { Empty } from '@/components/ui/empty'
@@ -15,11 +14,12 @@ import { useNodesStore } from '@/stores/nodes'
 import { fetchPingHistory } from '@/utils/api'
 import { DEFAULT_CHART_TIME_RANGE, getAvailableChartTimeRanges } from '@/utils/chartTimeRange'
 import { cutPeakValues } from '@/utils/recordHelper'
-import '@/utils/echarts' // 共享 ECharts 配置
 
 const props = defineProps<{
   uuid: string
 }>()
+
+const VChart = defineAsyncComponent(() => import('@/utils/echarts'))
 
 const appStore = useAppStore()
 const { pickSurfaceClass } = useBackgroundSurface()

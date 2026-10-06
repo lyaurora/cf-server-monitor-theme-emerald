@@ -13,6 +13,7 @@ import {
 } from 'echarts/components'
 import { use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
+import VChart from 'vue-echarts'
 
 // 一次性注册所有需要的 ECharts 组件
 use([
@@ -26,3 +27,5 @@ use([
   MarkLineComponent,
   CanvasRenderer,
 ])
+
+export default VChart
