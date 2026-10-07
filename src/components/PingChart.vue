@@ -88,7 +88,10 @@ const error = ref<string | null>(null)
 let fetchRequestId = 0
 
 // 任务选择
+// 保留当前时间范围内暂时无数据的线路选择。
 const selectedTaskIds = ref<number[]>([])
+const selectedTasks = computed(() => tasks.value.filter(task => selectedTaskIds.value.includes(task.id)))
+// 仅默认状态和显式“全选”自动选择新出现的线路。
 let selectAllTasks = true
 const cutPeak = ref(false)
 const showDelay = ref(true)
@@ -174,7 +177,7 @@ const mergedData = computed(() => {
 
 const chartData = computed(() => {
   let data = mergedData.value
-  const selectedKeys = selectedTaskIds.value.map(String)
+  const selectedKeys = selectedTasks.value.map(task => String(task.id))
 
   if (selectedKeys.length === 0)
     return []
@@ -299,10 +302,6 @@ const latestValues = computed(() => {
   })
 })
 
-const selectedTasks = computed(() => {
-  return tasks.value.filter(t => selectedTaskIds.value.includes(t.id))
-})
-
 const PING_TASK_KEYS: Record<number, string> = {
   1: 'ct',
   2: 'cu',
@@ -325,7 +324,7 @@ function appendRealtimePing(sample: PingSample): void {
 
     if (!tasks.value.some(task => task.id === taskId)) {
       tasks.value = [...tasks.value, { id: taskId, key, name: ping.name }]
-      if (selectAllTasks)
+      if (selectAllTasks && !selectedTaskIds.value.includes(taskId))
         selectedTaskIds.value = [...selectedTaskIds.value, taskId]
     }
 
@@ -365,7 +364,7 @@ function toggleTask(taskId: number) {
   else {
     selectedTaskIds.value = [...selectedTaskIds.value, taskId]
   }
-  selectAllTasks = tasks.value.every(task => selectedTaskIds.value.includes(task.id))
+  selectAllTasks = false
 }
 
 function showAllTasks() {
@@ -411,7 +410,7 @@ const baseTooltipConfig = computed(() => ({
 }))
 
 const pingChartOption = computed(() => {
-  const taskList = selectedTasks.value
+  const taskList = tasks.value
   const data = chartData.value
   const hours = selectedHours.value
   const rowsByTime = new Map(data.map(row => [row.time as number, row]))
@@ -426,7 +425,7 @@ const pingChartOption = computed(() => {
     const lossMarkerTimes = packetLossMarkers.value.get(task.id) || []
     return {
       id: String(task.id),
-      name: task.name,
+      name: String(task.id),
       type: 'line' as const,
       data: data.filter(d => Object.hasOwn(d, `timeout_${task.id}`))
         .map(d => [d.time as number, d[task.id] as number | null ?? null]),
@@ -487,14 +486,14 @@ const pingChartOption = computed(() => {
         let html = `<div style="font-weight:600;margin-bottom:6px;color:${chartThemeColors.value.textSecondary}">${timeStr}</div>`
         html += '<div style="display:flex;flex-direction:column;gap:4px">'
 
-        // 按延迟值排序显示，仅包含图例中可见的线路
+        // 按延迟从高到低显示，与曲线上下位置一致，仅包含图例中可见的线路
         const visibleTaskIds = new Set(p.map(item => item.seriesId))
         const sortedParams = taskList.filter(task => visibleTaskIds.has(String(task.id))).map(task => ({
           taskId: task.id,
           seriesName: task.name,
           value: rowData[task.id] as number | null,
           timedOut: rowData[`timeout_${task.id}`] === true,
-        })).sort((a, b) => (a.value ?? 0) - (b.value ?? 0))
+        })).sort((a, b) => (b.value ?? 0) - (a.value ?? 0))
 
         for (const item of sortedParams) {
           if (item.timedOut || (item.value !== null && item.value !== undefined)) {
@@ -516,7 +515,10 @@ const pingChartOption = computed(() => {
       itemGap: 16,
       icon: 'roundRect',
       textStyle: { fontSize: 11, color: chartThemeColors.value.textSecondary },
-      data: taskList.map(t => t.name),
+      // Use task IDs so lines with the same display name remain independently selectable.
+      data: taskList.map(task => String(task.id)),
+      formatter: (name: string) => taskList.find(task => String(task.id) === name)?.name ?? name,
+      selected: Object.fromEntries(taskList.map(task => [String(task.id), selectedTaskIds.value.includes(task.id)])),
     },
     grid: chartMargin,
     xAxis: {
@@ -557,8 +559,6 @@ const pingChartOption = computed(() => {
 // ==================== 生命周期 ====================
 
 watch(selectedView, () => {
-  selectAllTasks = true
-  selectedTaskIds.value = []
   remoteData.value = []
   tasks.value = []
   fetchRecords()
@@ -608,14 +608,14 @@ onBeforeUnmount(() => fetchRequestId++)
       <div class="flex gap-2 items-center">
         <Button
           variant="ghost" size="xs" class="h-7 rounded-sm border-none bg-background/60 hover:bg-background"
-          :class="[selectedTaskIds.length === tasks.length && 'bg-background !text-emerald-600']"
+          :class="[tasks.length > 0 && selectedTasks.length === tasks.length && 'bg-background !text-emerald-600']"
           @click="showAllTasks"
         >
           全选
         </Button>
         <Button
           variant="ghost" size="xs" class="h-7 rounded-sm border-none bg-background/60 hover:bg-background"
-          :class="[!selectedTaskIds.length && 'bg-background !text-emerald-600']"
+          :class="[tasks.length > 0 && !selectedTasks.length && 'bg-background !text-emerald-600']"
           @click="hideAllTasks"
         >
           全不选
@@ -703,17 +703,35 @@ onBeforeUnmount(() => fetchRequestId++)
                 </DataTooltip>
               </div>
               <div class="text-xs mt-1 flex gap-1.5 items-center text-muted-foreground">
-                <span v-if="task.timedOut" class="text-rose-500" title="最新探测">超时 ·</span>
-                <span class="font-medium" title="平均延迟">
+                <DataTooltip
+                  v-if="task.timedOut" as="span" placement="cursor" content="最新探测" tabindex="0"
+                  class="text-rose-500 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  超时 ·
+                </DataTooltip>
+                <DataTooltip
+                  as="span" placement="cursor" content="平均延迟" tabindex="0"
+                  class="font-medium rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
                   {{ task.avg !== undefined ? `${Math.round(task.avg)}ms` : '-' }}
-                </span>
+                </DataTooltip>
                 <template v-if="task.loss !== undefined">
                   <span class="opacity-60">·</span>
-                  <span title="丢包率">{{ task.loss.toFixed(2) }}%</span>
+                  <DataTooltip
+                    as="span" placement="cursor" content="丢包率" tabindex="0"
+                    class="rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    {{ task.loss.toFixed(2) }}%
+                  </DataTooltip>
                 </template>
                 <template v-if="task.p99_p50_ratio !== undefined">
                   <span class="opacity-60">·</span>
-                  <span title="波动率">{{ task.p99_p50_ratio.toFixed(2) }}</span>
+                  <DataTooltip
+                    as="span" placement="cursor" content="波动率" tabindex="0"
+                    class="rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    {{ task.p99_p50_ratio.toFixed(2) }}
+                  </DataTooltip>
                 </template>
               </div>
             </div>
@@ -763,7 +781,10 @@ onBeforeUnmount(() => fetchRequestId++)
           class="h-80 rounded-md p-4 transition-all"
           :class="pickSurfaceClass('bg-background/60 hover:bg-background', 'bg-background/50 hover:bg-background backdrop-blur-xl')"
         >
-          <VChart :option="pingChartOption" :update-options="{ replaceMerge: ['series'] }" autoresize />
+          <VChart
+            :option="pingChartOption" :update-options="{ replaceMerge: ['series'] }" autoresize
+            @legendselectchanged="toggleTask(Number($event.name))"
+          />
         </div>
       </template>
     </Spinner>

@@ -142,8 +142,11 @@ function openHoverTooltip(event: PointerEvent | FocusEvent) {
     return
   if (!('pointerType' in event)) {
     // Restoring dialog focus must not revive the dismissed tooltip, including after Escape.
-    if (!(event.target as HTMLElement)?.matches(':focus-visible')
-      || (event.relatedTarget instanceof Element && event.relatedTarget.closest('[role="dialog"], [role="alertdialog"]'))) {
+    const target = event.target as HTMLElement
+    const previousDialog = event.relatedTarget instanceof Element
+      ? event.relatedTarget.closest('[role="dialog"], [role="alertdialog"]')
+      : null
+    if (!target?.matches(':focus-visible') || (previousDialog && !previousDialog.contains(target))) {
       return
     }
   }

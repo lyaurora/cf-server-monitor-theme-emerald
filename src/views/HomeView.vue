@@ -9,6 +9,7 @@ import NodeCard from '@/components/NodeCard.vue'
 import NodeGeneralCards from '@/components/NodeGeneralCards.vue'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
+import { DataTooltip } from '@/components/ui/data-tooltip'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Empty } from '@/components/ui/empty'
 import { Input } from '@/components/ui/input'
@@ -46,6 +47,7 @@ onDeactivated(() => {
 
 const searchText = ref('')
 const debouncedSearchText = ref('')
+const showOfflineOnly = ref(false)
 const selectedPingNodeUuid = ref<string | null>(null)
 
 const updateDebouncedSearch = useDebounceFn((value: string) => {
@@ -99,11 +101,14 @@ const sampledGroupNodeList = computed(() => {
   return nodesStore.earthNodes.filter(node => isNodeInGroup(node.group, appStore.nodeSelectedGroup))
 })
 
+const searchedNodeList = computed(() => {
+  return groupNodeList.value.filter(n => isNodeMatchSearch(n, debouncedSearchText.value))
+})
+
+const offlineNodes = computed(() => searchedNodeList.value.filter(n => !n.online))
+
 const nodeList = computed(() => {
-  let filtered = groupNodeList.value
-  if (debouncedSearchText.value.trim()) {
-    filtered = filtered.filter(n => isNodeMatchSearch(n, debouncedSearchText.value))
-  }
+  const filtered = showOfflineOnly.value ? offlineNodes.value : searchedNodeList.value
   if (!appStore.offlineNodesLast)
     return filtered
   // 稳定排序：在线节点在前、离线节点在后，组内保持原有顺序
@@ -170,7 +175,7 @@ function getNodeItemTransitionStyle(index: number): Record<string, string> {
       <div class="nodes">
         <Tabs v-model="appStore.nodeSelectedGroup" class="w-full flex-col gap-4">
           <div class="flex gap-2 items-start flex-wrap">
-            <div class="min-w-0 flex-1 overflow-x-auto rounded-sm md:pointer-events-auto">
+            <div class="min-w-28 flex-1 overflow-x-auto rounded-sm md:pointer-events-auto">
               <TabsList :class="pickSurfaceClass('w-max h-8 bg-background/60 rounded-md', 'w-max h-8 bg-background/50 backdrop-blur-xl rounded-md')">
                 <TabsTrigger
                   v-for="g in groups" :key="g.name" :value="g.name"
@@ -180,7 +185,22 @@ function getNodeItemTransitionStyle(index: number): Record<string, string> {
                 </TabsTrigger>
               </TabsList>
             </div>
-            <div class="ml-auto search flex gap-2 items-center pointer-events-auto">
+            <div class="ml-auto search flex max-w-full gap-2 items-center pointer-events-auto">
+              <DataTooltip :content="String(offlineNodes.length)" class="h-8 shrink-0">
+                <Button
+                  variant="outline" size="icon" :aria-label="`仅看离线节点，${offlineNodes.length} 台离线`"
+                  :aria-pressed="showOfflineOnly"
+                  class="h-8 w-8 border-none shadow-none rounded-md"
+                  :class="[
+                    pickSurfaceClass('bg-background hover:bg-background/95', 'bg-background/50 hover:bg-background/60 backdrop-blur-xs'),
+                    offlineNodes.length > 0 && '!text-red-500',
+                    showOfflineOnly && '!bg-emerald-500/15',
+                  ]"
+                  @click="showOfflineOnly = !showOfflineOnly"
+                >
+                  <Icon icon="tabler:server-off" :width="14" :height="14" />
+                </Button>
+              </DataTooltip>
               <Button
                 variant="outline" size="icon" aria-label="卡片视图"
                 :aria-pressed="appStore.nodeViewMode === 'card'"
@@ -247,9 +267,12 @@ function getNodeItemTransitionStyle(index: number): Record<string, string> {
               @ping-click="handlePingClick"
             />
             <div v-else class="text-muted-foreground text-center py-8">
-              <Empty :description="debouncedSearchText.trim() ? '没有匹配的节点' : '暂无节点'">
-                <template v-if="debouncedSearchText.trim()" #extra>
-                  <Button variant="outline" size="sm" @click="searchText = ''">
+              <Empty :description="showOfflineOnly ? '当前范围内没有离线节点' : debouncedSearchText.trim() ? '没有匹配的节点' : '暂无节点'">
+                <template v-if="showOfflineOnly || debouncedSearchText.trim()" #extra>
+                  <Button v-if="showOfflineOnly" variant="outline" size="sm" @click="showOfflineOnly = false">
+                    显示全部状态
+                  </Button>
+                  <Button v-else variant="outline" size="sm" @click="searchText = ''">
                     清除搜索
                   </Button>
                 </template>

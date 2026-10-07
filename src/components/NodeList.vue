@@ -56,18 +56,36 @@ const columns: ColumnConfig[] = [
 
 const sortKey = ref<string>('')
 const sortDir = ref<1 | -1>(1)
+const nameCollator = new Intl.Collator('zh-CN', { numeric: true, sensitivity: 'base' })
 const visibleColumns = computed(() => columns.filter(col => col.key !== 'traffic' || props.nodes.some(node => node.showTraffic !== false)))
+
+function getInitialSortDir(col: ColumnConfig): 1 | -1 {
+  return ['status', 'os', 'name'].includes(col.key) ? 1 : -1
+}
 
 function handleSort(col: ColumnConfig) {
   if (!col.sortable)
     return
   if (sortKey.value === col.key) {
-    sortDir.value = sortDir.value === 1 ? -1 : 1
+    if (sortDir.value === getInitialSortDir(col))
+      sortDir.value = sortDir.value === 1 ? -1 : 1
+    else
+      sortKey.value = ''
   }
   else {
     sortKey.value = col.key
-    sortDir.value = 1
+    sortDir.value = getInitialSortDir(col)
   }
+}
+
+function getSortLabel(col: ColumnConfig): string {
+  if (sortKey.value !== col.key)
+    return `${col.label}，未按此列排序，点击${getInitialSortDir(col) === 1 ? '升序' : '降序'}排列`
+  const current = sortDir.value === 1 ? '升序' : '降序'
+  const next = sortDir.value === getInitialSortDir(col)
+    ? `点击切换为${sortDir.value === 1 ? '降序' : '升序'}`
+    : '点击恢复默认顺序'
+  return `${col.label}，当前${current}，${next}`
 }
 
 const sortedNodes = computed(() => {
@@ -79,11 +97,7 @@ const sortedNodes = computed(() => {
   return nodes.sort((a, b) => {
     switch (key) {
       case 'status': return dir * ((a.online ? 1 : 0) - (b.online ? 1 : 0))
-      case 'name': {
-        const va = (a.name || '').toLowerCase()
-        const vb = (b.name || '').toLowerCase()
-        return dir * (va < vb ? -1 : va > vb ? 1 : 0)
-      }
+      case 'name': return dir * nameCollator.compare(a.name || '', b.name || '')
       case 'os': {
         return dir * getOSName(a.os).localeCompare(getOSName(b.os), 'zh-CN')
       }
@@ -143,11 +157,14 @@ function getRowTransitionStyle(index: number): Record<string, string> {
           :class="['status', 'os'].includes(col.key) ? 'text-center' : 'text-left'"
         >
           <button
-            v-if="col.sortable" type="button" class="rounded-sm text-xs text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            :aria-label="`按${col.label}排序${sortKey === col.key ? (sortDir === 1 ? '，当前升序' : '，当前降序') : ''}`"
+            v-if="col.sortable" type="button" class="inline-flex items-center gap-1 rounded-sm text-xs text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            :aria-label="getSortLabel(col)"
             @click="handleSort(col)"
           >
-            {{ col.label }}{{ col.sortable && sortKey === col.key ? (sortDir === 1 ? ' ↑' : ' ↓') : '' }}
+            {{ col.label }}
+            <span aria-hidden="true" :class="sortKey === col.key ? 'text-foreground' : 'opacity-50'">
+              {{ sortKey === col.key ? (sortDir === 1 ? '↑' : '↓') : '↕' }}
+            </span>
           </button>
           <span v-else class="text-xs text-muted-foreground">{{ col.label }}</span>
         </div>
