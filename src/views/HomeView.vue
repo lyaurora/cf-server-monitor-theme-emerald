@@ -15,6 +15,7 @@ import { Empty } from '@/components/ui/empty'
 import { Input } from '@/components/ui/input'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useBackgroundSurface } from '@/composables/useBackgroundSurface'
+import { useNodeListTransition } from '@/composables/useNodeListTransition'
 import { useAppStore } from '@/stores/app'
 import { useNodesStore } from '@/stores/nodes'
 import { isNodeInGroup, parseNodeGroups } from '@/utils/groupHelper'
@@ -30,6 +31,7 @@ const nodeItemStaggerLimit = 12
 
 const appStore = useAppStore()
 const { pickSurfaceClass } = useBackgroundSurface()
+const { beforeUpdate, beforeLeave, afterLeave } = useNodeListTransition()
 const nodesStore = useNodesStore()
 const router = useRouter()
 
@@ -246,9 +248,14 @@ function getNodeItemTransitionStyle(index: number): Record<string, string> {
               v-if="nodeList.length !== 0 && appStore.nodeViewMode === 'card'"
               :appear="!appStore.disablePageAnimation"
               :css="!appStore.disablePageAnimation"
+              :move-class="appStore.disablePageAnimation ? 'transition-none' : undefined"
               name="node-card-switch"
               tag="div"
-              class="gap-3 grid grid-cols-1 sm:grid-cols-[repeat(auto-fill,minmax(300px,1fr))]"
+              class="relative content-start gap-3 grid grid-cols-1 sm:grid-cols-[repeat(auto-fill,minmax(300px,1fr))]"
+              @vue:before-update="beforeUpdate"
+              @before-leave="beforeLeave"
+              @after-leave="afterLeave"
+              @leave-cancelled="afterLeave"
             >
               <div
                 v-for="(node, index) in nodeList"

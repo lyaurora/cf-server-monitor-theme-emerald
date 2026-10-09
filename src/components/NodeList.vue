@@ -4,16 +4,16 @@ import { Icon } from '@iconify/vue'
 import { computed, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 import NodePingListCell from '@/components/NodePingListCell.vue'
-import TrafficProgress from '@/components/TrafficProgress.vue'
 import { Badge } from '@/components/ui/badge'
 import { DataTooltip } from '@/components/ui/data-tooltip'
 import { ProgressThin } from '@/components/ui/progress-thin'
 import { useBackgroundSurface } from '@/composables/useBackgroundSurface'
+import { useNodeListTransition } from '@/composables/useNodeListTransition'
 import { useAppStore } from '@/stores/app'
 import { useNodesStore } from '@/stores/nodes'
 import { getApiAssetUrl } from '@/utils/api'
 import { formatBytesPerSecondWithConfig, formatBytesWithConfig, formatUptimeWithFormat, getStatus } from '@/utils/helper'
-import { formatOfflineTime, getCustomTags, getPriceTags, getRemainingTimeTagClass, getTrafficUsed, getTrafficUsedPercentage, hasRegion, showTrafficProgress } from '@/utils/nodeHelper'
+import { formatOfflineTime, getCustomTags, getPriceTags, getRemainingTimeTagClass, getTrafficLevel, getTrafficUsed, getTrafficUsedPercentage, hasRegion, showTrafficProgress } from '@/utils/nodeHelper'
 import { getOSImage, getOSName } from '@/utils/osImageHelper'
 import { getRegionCode, getRegionDisplayName } from '@/utils/regionHelper'
 
@@ -40,6 +40,7 @@ const rowStaggerLimit = 12
 const appStore = useAppStore()
 const nodesStore = useNodesStore()
 const { pickSurfaceClass } = useBackgroundSurface()
+const { beforeUpdate, beforeLeave, afterLeave } = useNodeListTransition()
 
 const columns: ColumnConfig[] = [
   { key: 'status', label: '状态', width: '40px', sortable: true },
@@ -173,9 +174,14 @@ function getRowTransitionStyle(index: number): Record<string, string> {
       <TransitionGroup
         :appear="!appStore.disablePageAnimation"
         :css="!appStore.disablePageAnimation"
+        :move-class="appStore.disablePageAnimation ? 'transition-none' : undefined"
         name="node-row-switch"
         tag="div"
-        class="flex flex-col gap-1"
+        class="relative flex flex-col gap-1"
+        @vue:before-update="beforeUpdate"
+        @before-leave="beforeLeave"
+        @after-leave="afterLeave"
+        @leave-cancelled="afterLeave"
       >
         <div
           v-for="(node, index) in sortedNodes"
@@ -334,9 +340,9 @@ function getRowTransitionStyle(index: number): Record<string, string> {
                         <template v-else>∞</template>
                       </span>
                     </div>
-                    <TrafficProgress
+                    <ProgressThin
                       :percentage="getTrafficUsedPercentage(node)"
-                      height="4px"
+                      :status="getTrafficLevel(getTrafficUsedPercentage(node))" :height="4"
                     />
                   </div>
                   <template #content>
