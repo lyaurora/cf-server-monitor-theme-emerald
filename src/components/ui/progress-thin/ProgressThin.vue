@@ -34,8 +34,9 @@ const statusClass = computed(() => {
 </script>
 
 <template>
+  <!-- Paint containment keeps the fill aligned while blurred ancestor cards scale. -->
   <div
-    :class="cn('relative w-full overflow-hidden rounded-full bg-muted', props.class)"
+    :class="cn('relative w-full overflow-hidden rounded-full bg-muted [contain:paint]', props.class)"
     :style="heightStyle"
   >
     <div

@@ -111,7 +111,7 @@ export function getPriceTags(node: NodeData, lang: 'zh-CN' | 'en-US', now = Date
  * 获取剩余时间标签的样式类
  */
 export function getRemainingTimeTagClass(node: NodeData, now = Date.now()): string {
-  if (!hasConfiguredPrice(node))
+  if (!node.expired_at || !Number.isFinite(new Date(node.expired_at).getTime()))
     return ''
   return getExpireTextClass(node.expired_at, now)
 }
