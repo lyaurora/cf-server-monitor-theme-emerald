@@ -513,7 +513,7 @@ function numberField(source: Record<string, unknown>, ...keys: string[]): number
   return 0
 }
 
-function timestamp(value: unknown, fallback = Date.now()): number {
+export function timestamp(value: unknown, fallback = Date.now()): number {
   if (typeof value !== 'number' && typeof value !== 'string')
     return fallback
   const number = finiteNumber(value)
@@ -600,7 +600,7 @@ async function resolveTurnstileSiteKey(): Promise<string | null> {
 /**
  * Turnstile verified 失效后：弹窗重新验证，用 token 换新的 verified，再让调用方重试原请求。
  */
-async function refreshTurnstileSession(): Promise<boolean> {
+export async function refreshTurnstileSession(): Promise<boolean> {
   if (turnstileRefreshPromise)
     return turnstileRefreshPromise
 

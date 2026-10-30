@@ -16,7 +16,7 @@ import { formatBytesPerSecondWithConfig, formatBytesWithConfig, formatDateTime, 
 import { formatOfflineTime, getCustomTags, getRemainingTimeTagClass, getTrafficLevel, getTrafficUsed, getTrafficUsedPercentage, hasConfiguredPrice, hasRegion, showTrafficProgress } from '@/utils/nodeHelper'
 import { getOSImage, getOSName } from '@/utils/osImageHelper'
 import { getRegionCode, getRegionDisplayName } from '@/utils/regionHelper'
-import { formatPriceWithCycle, getDaysUntilExpired, getExpireStatus } from '@/utils/tagHelper'
+import { formatPriceWithCycle, getExpireStatus, getExpireText } from '@/utils/tagHelper'
 
 const props = defineProps<{ node: NodeData }>()
 
@@ -56,12 +56,12 @@ const expiryText = computed(() => {
     return '--'
   const now = nodesStore.pingNow.getTime()
   if (expiresAt <= now)
-    return '已过期'
+    return appStore.lang === 'zh-CN' ? '已过期' : 'Expired'
   const status = getExpireStatus(props.node.expired_at, now)
-  if (status === 'long_term')
-    return '长期'
-  const days = getDaysUntilExpired(props.node.expired_at, now)
-  return expiresAt - now < 86_400_000 ? '不足 1 天' : `剩余 ${days} 天`
+  const text = getExpireText(props.node.expired_at, appStore.lang, now)
+  if (status === 'expired' || status === 'long_term' || expiresAt - now < 86_400_000)
+    return text
+  return appStore.lang === 'zh-CN' ? `剩余 ${text}` : `${text} left`
 })
 const planText = computed(() => hasConfiguredPrice(props.node) ? formatPriceWithCycle(props.node.price, props.node.billing_cycle, props.node.currency, appStore.lang) : '--')
 

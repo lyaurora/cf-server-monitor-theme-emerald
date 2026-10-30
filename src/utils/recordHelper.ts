@@ -180,7 +180,8 @@ export function cutPeakValues(
   const halfWindow = Math.floor(windowSize / 2)
 
   for (const key of keys) {
-    // 第一步：检测并移除突变值
+    // 第一步：基于原始值检测突变，再统一置空，避免已置空的尖峰影响后续检测
+    const spikes: number[] = []
     for (let i = 0; i < result.length; i++) {
       const currentRow = result[i]
       if (!currentRow)
@@ -210,21 +211,22 @@ export function cutPeakValues(
         // 如果有足够的邻近值进行突变检测
         if (neighborValues.length >= 2) {
           const neighborSum = neighborValues.reduce((sum, val) => sum + val, 0)
-          const neighborMean = neighborValues.length > 0 ? neighborSum / neighborValues.length : 0
+          const neighborMean = neighborSum / neighborValues.length
 
           // 检测突变
           if (neighborMean > 0) {
             const relativeChange = Math.abs(currentValue - neighborMean) / neighborMean
-            if (relativeChange > spikeThreshold) {
-              result[i] = { ...currentRow, [key]: null }
-            }
+            if (relativeChange > spikeThreshold)
+              spikes.push(i)
           }
           else if (Math.abs(currentValue) > 10) {
-            result[i] = { ...currentRow, [key]: null }
+            spikes.push(i)
           }
         }
       }
     }
+    for (const i of spikes)
+      result[i] = { ...result[i], [key]: null }
 
     // 第二步：使用 EWMA 平滑和填充
     let ewma: number | null = null

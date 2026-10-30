@@ -34,17 +34,11 @@ export function useNodePingStats(
 ) {
   const nodesStore = useNodesStore()
   const history = computed(() => {
-    const now = nodesStore.pingNow.getTime()
-    const cutoff = now - PING_HISTORY_WINDOW_MS
-    const latest = Math.max(now, Date.now())
     const lineKey = toValue(line)
     const maxGap = nodesStore.pingSampleIntervalMs * 4
     const points: NodePingHistoryPoint[] = []
     let previous: NodePingHistoryPoint | undefined
     for (const point of nodesStore.pingHistoryByUuid[toValue(uuid)] ?? []) {
-      // A real point just before the window can still cover its left edge.
-      if (!(point.timeMs >= cutoff - maxGap && point.timeMs <= latest))
-        continue
       const values = point.lines?.[lineKey]
       if (!values)
         continue
@@ -62,9 +56,10 @@ export function useNodePingStats(
   })
 
   const avgLoss = computed(() => {
-    // Match the last history bar by including samples from the current millisecond.
-    const now = Date.now() + 1
-    return pingAverage(history.value, 'loss', now, nodesStore.pingSampleIntervalMs, now - PING_HISTORY_WINDOW_MS)
+    // Same window end as the history bars, including samples from the last millisecond.
+    const last = history.value.at(-1)
+    const now = Math.max(nodesStore.pingNow.getTime(), last?.endTimeMs ?? last?.timeMs ?? 0) + 1
+    return pingAverage(history.value, 'loss', now, nodesStore.pingSampleIntervalMs, now - 1 - PING_HISTORY_WINDOW_MS)
   })
 
   return { history, avgLoss }

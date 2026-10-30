@@ -1,4 +1,5 @@
 import type { WatchStopHandle } from 'vue'
+import type { NodeData } from '@/stores/nodes'
 import type { NodeStatus } from '@/utils/rpc'
 import { watch } from 'vue'
 import { toast } from 'vue-sonner'
@@ -9,7 +10,6 @@ import {
   adaptServer,
   ApiError,
   buildAdminUrl,
-  cfRequest,
   fetchAllServers,
   fetchServer,
   fetchSiteConfig,
@@ -17,8 +17,9 @@ import {
   invalidateHistoryRequests,
   isEnabledValue,
   mergeServerPingSample,
+  refreshTurnstileSession,
+  timestamp,
 } from '@/utils/api'
-import { requestTurnstileToken } from '@/utils/turnstile'
 
 const CONNECTION_NOTICE_DELAY_MS = 30_000
 
@@ -43,14 +44,26 @@ interface LiveSample {
   data: Record<string, unknown>
 }
 
-function normalizeSampleTimestamp(value: unknown, fallback = Date.now()): number {
-  if (typeof value !== 'number' && typeof value !== 'string')
-    return fallback
-  const number = Number(value)
-  if (!Number.isFinite(number) || number <= 0)
-    return fallback
-  return number < 1e12 ? number * 1000 : number
-}
+// Status field -> sample keys; carried over from the previous status when the sample omits them.
+const LIVE_STATUS_FIELDS: Array<[keyof NodeStatus & keyof NodeData, string[]]> = [
+  ['cpu', ['cpu']],
+  ['ram', ['ram_used']],
+  ['net_in', ['net_in_speed', 'net_in']],
+  ['net_out', ['net_out_speed', 'net_out']],
+  ['net_total_up', ['net_tx', 'net_total_up']],
+  ['net_total_down', ['net_rx', 'net_total_down']],
+  ['net_monthly_up', ['net_tx_monthly']],
+  ['net_monthly_down', ['net_rx_monthly']],
+  ['swap_total', ['swap_total']],
+  ['swap', ['swap_used']],
+  ['disk_total', ['disk_total']],
+  ['disk', ['disk_used']],
+  ['process', ['processes']],
+  ['connections', ['tcp_conn']],
+  ['connections_udp', ['udp_conn']],
+  ['gpu', ['gpu']],
+  ['temp', ['temp']],
+]
 
 function sampleHasField(data: Record<string, unknown>, ...keys: string[]): boolean {
   return keys.some(key => data[key] !== undefined && data[key] !== null && data[key] !== '')
@@ -85,11 +98,8 @@ class InitManager {
       if (isEnabledValue(config.turnstile_enabled) && !config.verified) {
         if (!config.turnstile_site_key)
           throw new Error('源站已启用 Turnstile，但未返回 Site Key')
-        const token = await requestTurnstileToken(config.turnstile_site_key)
-        if (this.destroyed)
-          return
-        localStorage.setItem('turnstile_token', token)
-        await cfRequest('/api/config')
+        if (!await refreshTurnstileSession())
+          throw new Error('Turnstile 验证失败')
         if (this.destroyed)
           return
         config = await fetchSiteConfig()
@@ -206,7 +216,7 @@ class InitManager {
     const { client, status } = adaptServer({
       id: sample.serverId,
       ...sample.data,
-      boot_time: normalizeSampleTimestamp(sample.data.boot_time, 0) || Date.parse(currentNode?.boot_time ?? ''),
+      boot_time: Math.max(0, timestamp(sample.data.boot_time, 0)) || Date.parse(currentNode?.boot_time ?? ''),
       last_updated: sample.ts,
     })
 
@@ -218,47 +228,17 @@ class InitManager {
       currentNode.boot_time = client.boot_time
 
     if (current) {
-      if (!sampleHasField(sample.data, 'cpu'))
-        status.cpu = current.cpu
-      if (!sampleHasField(sample.data, 'ram_used'))
-        status.ram = current.ram
-      if (!sampleHasField(sample.data, 'net_in_speed', 'net_in'))
-        status.net_in = current.net_in
-      if (!sampleHasField(sample.data, 'net_out_speed', 'net_out'))
-        status.net_out = current.net_out
-      if (!sampleHasField(sample.data, 'net_tx', 'net_total_up'))
-        status.net_total_up = current.net_total_up
-      if (!sampleHasField(sample.data, 'net_rx', 'net_total_down'))
-        status.net_total_down = current.net_total_down
-      if (!sampleHasField(sample.data, 'net_tx_monthly'))
-        status.net_monthly_up = current.net_monthly_up
-      if (!sampleHasField(sample.data, 'net_rx_monthly'))
-        status.net_monthly_down = current.net_monthly_down
+      for (const [field, keys] of LIVE_STATUS_FIELDS) {
+        if (!sampleHasField(sample.data, ...keys))
+          Object.assign(status, { [field]: current[field] })
+      }
       if (!sampleHasField(sample.data, 'ram_total'))
         status.ram_total = 'ram_total' in current ? current.ram_total : current.mem_total
-      if (!sampleHasField(sample.data, 'swap_total'))
-        status.swap_total = current.swap_total
-      if (!sampleHasField(sample.data, 'swap_used'))
-        status.swap = current.swap
-      if (!sampleHasField(sample.data, 'disk_total'))
-        status.disk_total = current.disk_total
-      if (!sampleHasField(sample.data, 'disk_used'))
-        status.disk = current.disk
       if (!sampleHasField(sample.data, 'load_avg')) {
         status.load = current.load
         status.load5 = current.load5
         status.load15 = current.load15
       }
-      if (!sampleHasField(sample.data, 'processes'))
-        status.process = current.process
-      if (!sampleHasField(sample.data, 'tcp_conn'))
-        status.connections = current.connections
-      if (!sampleHasField(sample.data, 'udp_conn'))
-        status.connections_udp = current.connections_udp
-      if (!sampleHasField(sample.data, 'gpu'))
-        status.gpu = current.gpu
-      if (!sampleHasField(sample.data, 'temp'))
-        status.temp = current.temp
       status.ping = mergeServerPingSample(sample.data, current.ping)
     }
 
@@ -290,7 +270,7 @@ class InitManager {
           return []
         return [{
           serverId: update.serverId,
-          ts: normalizeSampleTimestamp(sample.ts ?? sample.timestamp ?? data.sample_timestamp ?? data.last_updated ?? data.timestamp ?? message.ts),
+          ts: timestamp(sample.ts ?? sample.timestamp ?? data.sample_timestamp ?? data.last_updated ?? data.timestamp ?? message.ts),
           data,
         }]
       }).sort((a, b) => a.ts - b.ts)
@@ -314,7 +294,6 @@ class InitManager {
         return
       // A fresh HTTP snapshot and an open socket confirm recovery together.
       this.clearConnectionNotice()
-      this.reconnectAttempts = 0
       // Explicit subscription also asks the backend to resume fast agent reports.
       socket.send(JSON.stringify({
         type: 'subscribe',
@@ -332,8 +311,11 @@ class InitManager {
       catch {
         return
       }
-      if (message?.type === 'batchUpdate')
+      if (message?.type === 'batchUpdate') {
+        // Reset backoff only once data flows, so post-handshake closes still back off.
+        this.reconnectAttempts = 0
         this.applyBatch(message, serverId)
+      }
     })
     socket.addEventListener('close', () => {
       if (!isCurrent())
@@ -394,6 +376,7 @@ class InitManager {
     if (document.hidden) {
       if (this.connectionNoticeId !== undefined)
         toast.dismiss(this.connectionNoticeId)
+      this.connectionNoticeId = undefined
     }
     else if (this.connectionIssue) {
       this.reportConnectionIssue(this.connectionIssue)

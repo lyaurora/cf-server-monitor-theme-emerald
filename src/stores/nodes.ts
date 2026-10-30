@@ -141,6 +141,10 @@ const useNodesStore = defineStore('nodes', () => {
     }
   }
 
+  function historyCutoff(): number {
+    return Date.now() - PING_HISTORY_WINDOW_MS - pingHistoryBucketMs() * 4
+  }
+
   /** 当前配置下的窗口桶长（毫秒）；points/hours 无效时回退默认值 */
   function pingHistoryBucketMs(): number {
     const { points, hours } = pingHistoryConfig.value
@@ -168,7 +172,7 @@ const useNodesStore = defineStore('nodes', () => {
   /** 保留真实采样时间，避免把一分钟实测与数分钟窗口桶等权混算。 */
   function recordPingSample(uuid: string, status: NodeStatus): void {
     const sampleTime = Date.parse(status.time)
-    if (!Number.isFinite(sampleTime) || sampleTime < Date.now() - PING_HISTORY_WINDOW_MS - pingHistoryBucketMs() * 4)
+    if (!Number.isFinite(sampleTime) || sampleTime < historyCutoff())
       return
     const entries = Object.entries(status.ping ?? {}).filter(([, entry]) => Number.isFinite(entry.latest) || Number.isFinite(entry.loss))
     if (!entries.length)
@@ -191,7 +195,7 @@ const useNodesStore = defineStore('nodes', () => {
       lines[key] = { latency: loss === 100 ? null : latency, loss }
     }
     const point = { time: status.time, timeMs: sampleTime, lines }
-    const cutoff = Date.now() - PING_HISTORY_WINDOW_MS - pingHistoryBucketMs() * 4
+    const cutoff = historyCutoff()
     if (append) {
       let start = 0
       while (start < history.length && history[start]!.timeMs < cutoff)
@@ -262,7 +266,7 @@ const useNodesStore = defineStore('nodes', () => {
         // 开关开启且后端返回窗口时直接作为历史（已含最新桶），
         // 否则（开关关闭 / 窗口缺失）由实时样本按单条 ping 值逐步累积
         if (pingHistoryConfig.value.showThreeNetDetails && status.pingWindow?.length) {
-          const cutoff = Date.now() - PING_HISTORY_WINDOW_MS - pingHistoryBucketMs() * 4
+          const cutoff = historyCutoff()
           pingHistoryByUuid[uuid] = status.pingWindow
             .map(point => ({ ...point, timeMs: Date.parse(point.time) }))
             .filter(point => point.timeMs >= cutoff)

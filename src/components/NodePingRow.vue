@@ -23,22 +23,28 @@ const hoveredBarIndex = ref<number | null>(null)
 const historyPanels = useTemplateRef<InstanceType<typeof DataTooltip>[]>('historyPanels')
 const { width: panelWidth } = useElementSize(() => historyPanels.value?.[0])
 const { pixelRatio } = useDevicePixelRatio()
-const barStyles = computed(() => {
+const barLayout = computed(() => {
   const ratio = pixelRatio.value
   const count = NODE_PING_BAR_COUNT
   const width = Math.floor(panelWidth.value * ratio)
+  // Before the first measure, fall back to a percentage layout so bars stay visible.
+  if (width <= 0) {
+    return {
+      vars: { '--bar-w': `calc(${100 / count}% - 1px)`, '--bar-h': '5px' },
+      lefts: Array.from({ length: count }, (_, index) => `${(index * 100) / count}%`),
+    }
+  }
   const idealBarWidth = Math.round((width - (count - 1) * ratio) / count)
   const maxBarWidth = Math.floor((width - (count - 1)) / count)
   // At tiny scales, reduce gaps before sacrificing the last pixel of each bar.
-  const barWidth = width < count ? 0 : Math.max(1, Math.min(idealBarWidth, maxBarWidth))
+  const barWidth = Math.max(1, Math.min(idealBarWidth, maxBarWidth))
   const step = (width - barWidth) / (count - 1)
 
   // Keep bars and their relative positions on device pixels; put rounding differences in gaps.
-  return Array.from({ length: count }, (_, index) => ({
-    width: `${barWidth / ratio}px`,
-    height: `${Math.round(5 * ratio) / ratio}px`,
-    left: `${Math.round(index * step) / ratio}px`,
-  }))
+  return {
+    vars: { '--bar-w': `${barWidth / ratio}px`, '--bar-h': `${Math.round(5 * ratio) / ratio}px` },
+    lefts: Array.from({ length: count }, (_, index) => `${Math.round(index * step) / ratio}px`),
+  }
 })
 
 async function selectLine(key: string) {
@@ -95,13 +101,13 @@ async function selectLine(key: string) {
       :content="panel.bars[hoveredBarIndex ?? panel.bars.length - 1]?.tooltip"
       content-class="whitespace-nowrap w-max px-1.5 !leading-[1.2] text-[11px]"
       class="block h-2 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-      :aria-label="`${name} ${panel.name}历史，查看图表`" @click.capture.stop="emit('pingClick')"
+      :style="barLayout.vars" :aria-label="`${name} ${panel.name}历史，查看图表`" @click="emit('pingClick')"
       @pointerleave="hoveredBarIndex = null"
     >
       <span
         v-for="(bar, barIndex) in panel.bars" :key="bar.key"
-        class="absolute top-1/2 -translate-y-1/2 rounded-[1px] transition-transform duration-150 hover:scale-y-200" :class="bar.className"
-        :style="barStyles[barIndex]"
+        class="absolute top-1/2 h-(--bar-h) w-(--bar-w) -translate-y-1/2 rounded-[1px] transition-transform duration-150 hover:scale-y-200" :class="bar.className"
+        :style="{ left: barLayout.lefts[barIndex] }"
         @pointerenter="hoveredBarIndex = barIndex"
       />
     </DataTooltip>

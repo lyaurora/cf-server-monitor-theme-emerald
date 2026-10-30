@@ -59,6 +59,7 @@ const sortKey = ref<string>('')
 const sortDir = ref<1 | -1>(1)
 const nameCollator = new Intl.Collator('zh-CN', { numeric: true, sensitivity: 'base' })
 const visibleColumns = computed(() => columns.filter(col => col.key !== 'traffic' || props.nodes.some(node => node.showTraffic !== false)))
+const offlineOverlayColumnStart = computed(() => visibleColumns.value.findIndex(col => col.key === 'name') + 1)
 
 function getInitialSortDir(col: ColumnConfig): 1 | -1 {
   return ['status', 'os', 'name'].includes(col.key) ? 1 : -1
@@ -191,7 +192,7 @@ function getRowTransitionStyle(index: number): Record<string, string> {
           :style="getRowTransitionStyle(index)"
           @click="handleClick(node)"
         >
-          <div class="grid gap-2 items-center" :style="gridStyle">
+          <div class="grid gap-2 items-center" :style="gridStyle" :aria-hidden="node.online ? undefined : 'true'" :inert="!node.online || undefined">
             <template v-for="col in visibleColumns" :key="col.key">
               <!-- 在线状态指示器 -->
               <div v-if="col.key === 'status'" class="flex justify-center">
@@ -222,16 +223,14 @@ function getRowTransitionStyle(index: number): Record<string, string> {
                 </div>
                 <div v-if="node.uptime" class="text-[11px] text-muted-foreground/70 truncate">
                   {{ formatUptime(node.uptime ?? 0) }}
-                  <template v-if="getPriceTags(node, appStore.lang, nodesStore.pingNow.getTime()).length > 0">
-                    <span v-for="(tag, tagIndex) in getPriceTags(node, appStore.lang, nodesStore.pingNow.getTime())" :key="tagIndex" class="ml-1">
-                      <template v-if="tag.highlightValue">
-                        <span :class="getRemainingTimeTagClass(node, nodesStore.pingNow.getTime())">{{ tag.highlightValue }}</span>
-                      </template>
-                      <template v-else>
-                        {{ tag.text }}
-                      </template>
-                    </span>
-                  </template>
+                  <span v-for="(tag, tagIndex) in getPriceTags(node, appStore.lang, nodesStore.pingNow.getTime())" :key="tagIndex" class="ml-1">
+                    <template v-if="tag.highlightValue">
+                      <span :class="getRemainingTimeTagClass(node, nodesStore.pingNow.getTime())">{{ tag.highlightValue }}</span>
+                    </template>
+                    <template v-else>
+                      {{ tag.text }}
+                    </template>
+                  </span>
                 </div>
               </div>
 
@@ -378,7 +377,7 @@ function getRowTransitionStyle(index: number): Record<string, string> {
             v-if="!node.online" class="absolute inset-0 z-2 p-2 bg-background/10 rounded-lg flex items-center"
           >
             <div class="grid gap-2 items-center justify-center" :style="gridStyle">
-              <div class="h-full space-y-1" style="grid-column: 3 / -1">
+              <div class="h-full space-y-1" :style="{ gridColumn: `${offlineOverlayColumnStart} / -1` }">
                 <RouterLink
                   :to="{ name: 'instance-detail', params: { id: node.uuid } }"
                   class="block truncate rounded-sm text-sm font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"

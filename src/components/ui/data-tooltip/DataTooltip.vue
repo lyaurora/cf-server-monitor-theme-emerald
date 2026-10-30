@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { HTMLAttributes } from 'vue'
-import { useElementSize } from '@vueuse/core'
+import { useElementSize, useMediaQuery } from '@vueuse/core'
 import { computed, onBeforeUnmount, ref, useId, useSlots, watch } from 'vue'
 import { cn } from '@/lib/utils'
 
@@ -76,12 +76,10 @@ const sizeStyle = computed(() => {
   return style
 })
 
-function isTouchLikePointer(event: PointerEvent) {
-  const hasCoarsePointer = typeof window !== 'undefined'
-    && typeof window.matchMedia === 'function'
-    && window.matchMedia('(hover: none), (pointer: coarse)').matches
+const hasCoarsePointer = useMediaQuery('(hover: none), (pointer: coarse)')
 
-  return event.pointerType !== 'mouse' || hasCoarsePointer
+function isTouchLikePointer(event: PointerEvent) {
+  return event.pointerType !== 'mouse' || hasCoarsePointer.value
 }
 
 function closeTooltip() {
@@ -210,7 +208,7 @@ onBeforeUnmount(removeDocumentListeners)
           'pointer-events-none rounded bg-foreground/80 p-1 text-[10px] leading-none text-background shadow-lg',
           placement === 'cursor'
             ? 'fixed z-50 w-max whitespace-nowrap'
-            : ['absolute z-20 hidden group-hover/data-tooltip:block group-focus-within/data-tooltip:block whitespace-normal break-words', isOpen && 'block', placementClass[placement]],
+            : ['absolute z-20 whitespace-normal break-words', placementClass[placement]],
           props.contentClass,
         )"
         :style="[sizeStyle, cursorStyle]"

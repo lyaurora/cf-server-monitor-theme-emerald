@@ -223,12 +223,8 @@ const showDateInAxis = computed(() => selectedHours.value >= 24)
 
 // ==================== 任务选择 ====================
 
-// 获取任务颜色（根据任务在完整列表中的索引）
-function getTaskColor(taskId: number): string {
-  const taskIndex = tasks.value.findIndex(t => t.id === taskId)
-  const safeIndex = Math.max(0, taskIndex % chartColors.length)
-  return chartColors[safeIndex]!
-}
+// 任务颜色（根据任务在完整列表中的索引）
+const taskColors = computed(() => new Map(tasks.value.map((task, idx) => [task.id, chartColors[idx % chartColors.length]!])))
 
 function finiteMetric(value: unknown): number | undefined {
   const number = Number(value)
@@ -241,10 +237,9 @@ function average(values: number[]): number | undefined {
   return values.reduce((sum, value) => sum + value, 0) / values.length
 }
 
-function percentile(values: number[], ratio: number): number | undefined {
-  if (!values.length)
+function percentile(sorted: number[], ratio: number): number | undefined {
+  if (!sorted.length)
     return undefined
-  const sorted = [...values].sort((a, b) => a - b)
   const index = Math.min(sorted.length - 1, Math.max(0, Math.ceil(sorted.length * ratio) - 1))
   return sorted[index]
 }
@@ -271,23 +266,31 @@ const latestValues = computed(() => {
   if (!tasks.value.length)
     return []
 
-  return tasks.value.map((task, idx) => {
-    const taskRecords = remoteData.value.filter(record => record.task_id === task.id)
+  const recordsByTask = new Map<number, PingRecord[]>()
+  for (const record of remoteData.value) {
+    const list = recordsByTask.get(record.task_id)
+    if (list)
+      list.push(record)
+    else
+      recordsByTask.set(record.task_id, [record])
+  }
+  return tasks.value.map((task) => {
+    const taskRecords = recordsByTask.get(task.id) ?? []
     const latencyRecords = taskRecords.filter(record => record.value >= 0)
     const latencyValues = latencyRecords.map(record => record.value)
+    const sortedLatency = [...latencyValues].sort((a, b) => a - b)
     const lossValues = taskRecords
       .map(record => finiteMetric(record.loss))
       .filter((value): value is number => value !== undefined)
     const latestRecord = taskRecords.at(-1)
     const latest = latestRecord && Number.isFinite(latestRecord.value) && latestRecord.value >= 0 ? latestRecord.value : undefined
-    const p50 = percentile(latencyValues, 0.5)
-    const p99 = percentile(latencyValues, 0.99)
+    const p50 = percentile(sortedLatency, 0.5)
+    const p99 = percentile(sortedLatency, 0.99)
 
-    const safeIdx = Math.max(0, idx % chartColors.length)
     return {
       ...task,
-      min: latencyValues.length ? Math.min(...latencyValues) : undefined,
-      max: latencyValues.length ? Math.max(...latencyValues) : undefined,
+      min: sortedLatency[0],
+      max: sortedLatency.at(-1),
       avg: average(latencyValues),
       latest,
       timedOut: latestRecord !== undefined && latestRecord.value < 0,
@@ -297,7 +300,7 @@ const latestValues = computed(() => {
       interval: sampleIntervalSeconds(latencyRecords) ?? finiteMetric(task.interval),
       loss: average(lossValues) ?? finiteMetric(task.loss),
       total: latencyRecords.length || undefined,
-      color: chartColors[safeIdx]!,
+      color: taskColors.value.get(task.id)!,
     }
   })
 })
@@ -421,7 +424,7 @@ const pingChartOption = computed(() => {
 
   // 构建 series，确保颜色与卡片一致
   const series = taskList.map((task) => {
-    const color = getTaskColor(task.id)
+    const color = taskColors.value.get(task.id) ?? chartColors[0]!
     const lossMarkerTimes = packetLossMarkers.value.get(task.id) || []
     return {
       id: String(task.id),
@@ -454,20 +457,12 @@ const pingChartOption = computed(() => {
     }
   })
 
-  // 颜色映射表（用于 Tooltip）
-  const colorMap = new Map<number, string>()
-  tasks.value.forEach((task, idx) => {
-    const safeIdx = Math.max(0, idx % chartColors.length)
-    colorMap.set(task.id, chartColors[safeIdx]!)
-  })
+  const colorMap = taskColors.value
 
   return {
     animation: false,
     // 全局颜色设置（用于图例等）
-    color: tasks.value.map((_, idx) => {
-      const safeIdx = Math.max(0, idx % chartColors.length)
-      return chartColors[safeIdx]!
-    }),
+    color: [...colorMap.values()],
     tooltip: {
       ...baseTooltipConfig.value,
       formatter: (params: unknown) => {

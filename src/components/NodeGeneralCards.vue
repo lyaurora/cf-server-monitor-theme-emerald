@@ -29,7 +29,7 @@ const excludeFreeNodes = ref(true)
 const financeRateCurrencies: readonly CurrencyCode[] = financeHelper.DISPLAY_FINANCE_CURRENCIES
 const summaryNodes = computed(() => props.nodes ?? nodesStore.nodes)
 const financeNodes = computed(() => summaryNodes.value.filter(node => node.showPrice !== false))
-const remainingValueNodes = computed(() => financeNodes.value.filter(node => node.showExpire !== false))
+const remainingValueNodes = computed(() => financeNodes.value.filter(node => node.showExpire !== false && node.expired_at))
 const trafficNodes = computed(() => summaryNodes.value.filter(node => node.showTraffic !== false))
 const summaryTransitionKey = computed(() => props.transitionKey ?? 'all')
 const metricSwitchTransitionProps = computed(() => ({
@@ -145,12 +145,14 @@ const financeSummaryItems = computed(() => [
     value: formattedMonthlyAverageCost.value.value,
     symbol: formattedMonthlyAverageCost.value.symbol,
   },
-  {
-    label: '剩余价值',
-    value: formattedRemainingValue.value.value,
-    symbol: formattedRemainingValue.value.symbol,
-  },
-].filter(item => item.label !== '剩余价值' || remainingValueNodes.value.length > 0))
+  ...(remainingValueNodes.value.length > 0
+    ? [{
+        label: '剩余价值',
+        value: formattedRemainingValue.value.value,
+        symbol: formattedRemainingValue.value.symbol,
+      }]
+    : []),
+])
 const financeHeadline = computed(() => remainingValueNodes.value.length ? formattedRemainingValue.value : formattedMonthlyAverageCost.value)
 const exchangeRateRows = computed(() => financeRateCurrencies.map((currency) => {
   const baseRate = exchangeRates.value[exchangeRateBaseCurrency.value] || 1

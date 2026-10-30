@@ -40,6 +40,17 @@ function getLossToneClass(loss: number): string {
   return 'bg-rose-500/80'
 }
 
+function buildEmptyPingBars(metric: NodePingMetric): NodePingBar[] {
+  return Array.from({ length: NODE_PING_BAR_COUNT }, (_, index) => ({
+    key: `${metric}-empty-${index}`,
+    className: 'bg-muted-foreground/10',
+    tooltip: 'N/A',
+  }))
+}
+
+const EMPTY_LATENCY_BARS = buildEmptyPingBars('latency')
+const EMPTY_LOSS_BARS = buildEmptyPingBars('loss')
+
 export function useNodePingDisplay(
   uuid: MaybeRefOrGetter<string>,
   line: MaybeRefOrGetter<string>,
@@ -104,18 +115,10 @@ export function useNodePingDisplay(
     return bars
   }
 
-  function buildEmptyPingBars(metric: NodePingMetric): NodePingBar[] {
-    return Array.from({ length: NODE_PING_BAR_COUNT }, (_, index) => ({
-      key: `${metric}-empty-${index}`,
-      className: 'bg-muted-foreground/10',
-      tooltip: 'N/A',
-    }))
-  }
-
   const latencyBars = computed<NodePingBar[]>(previous => buildPingBars('latency', previous))
   const lossBars = computed<NodePingBar[]>(previous => buildPingBars('loss', previous))
-  const latencyRenderBars = computed(() => latencyBars.value.length ? latencyBars.value : buildEmptyPingBars('latency'))
-  const lossRenderBars = computed(() => lossBars.value.length ? lossBars.value : buildEmptyPingBars('loss'))
+  const latencyRenderBars = computed(() => latencyBars.value.length ? latencyBars.value : EMPTY_LATENCY_BARS)
+  const lossRenderBars = computed(() => lossBars.value.length ? lossBars.value : EMPTY_LOSS_BARS)
 
   const latestPing = computed(() => nodesStore.nodesByUuid.get(toValue(uuid))?.ping?.[toValue(line)])
   const latestLatency = computed(() => {
