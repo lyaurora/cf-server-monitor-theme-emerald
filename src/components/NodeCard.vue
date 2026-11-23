@@ -248,6 +248,18 @@ function openPingDialog() {
                 {{ props.node.uptime > 0 ? formatUptime(props.node.uptime) : '' }}
               </span>
             </div>
+            <div class="-mt-1 grid grid-cols-2 gap-x-3 tabular-nums">
+              <div class="flex min-w-0 items-center justify-between">
+                <span class="truncate">TCP</span>
+                <div class="border-t-2 border-dotted border-gray-500/10 mx-2 flex-1" />
+                <span class="truncate font-medium text-green-600">{{ props.node.connections }}</span>
+              </div>
+              <div class="flex min-w-0 items-center justify-between">
+                <span class="truncate">UDP</span>
+                <div class="border-t-2 border-dotted border-gray-500/10 mx-2 flex-1" />
+                <span class="truncate font-medium text-blue-600">{{ props.node.connections_udp }}</span>
+              </div>
+            </div>
             <div v-if="nodesStore.showThreeNetDetails" class="flex flex-col gap-2">
               <!-- History reacts to its own store; CPU/traffic updates need not redraw these rows. -->
               <NodePingRow
