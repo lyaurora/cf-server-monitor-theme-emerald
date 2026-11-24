@@ -2,7 +2,7 @@
 import type { NodeData } from '@/stores/nodes'
 import { Icon } from '@iconify/vue'
 import { useDebounceFn } from '@vueuse/core'
-import { computed, defineAsyncComponent, nextTick, onActivated, onDeactivated, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, nextTick, onActivated, onDeactivated, ref, useId, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import MarkdownRenderer from '@/components/MarkdownRenderer.vue'
 import NodeCard from '@/components/NodeCard.vue'
@@ -34,6 +34,7 @@ const { pickSurfaceClass } = useBackgroundSurface()
 const { beforeUpdate, beforeLeave, afterLeave } = useNodeListTransition()
 const nodesStore = useNodesStore()
 const router = useRouter()
+const dialogPatternId = useId()
 
 onActivated(() => {
   if (appStore.homeScrollPosition > 0) {
@@ -71,7 +72,8 @@ watch(
   () => nodesStore.groups,
   (gs) => {
     const cur = appStore.nodeSelectedGroup
-    if (cur !== 'all' && !gs.includes(cur)) {
+    // 节点尚未加载或异常清空时，不覆盖用户已保存的分组选择
+    if (gs.length > 0 && cur !== 'all' && !gs.includes(cur)) {
       appStore.nodeSelectedGroup = 'all'
     }
   },
@@ -120,7 +122,7 @@ const nodeList = computed(() => {
 const selectedPingNode = computed(() => {
   if (!selectedPingNodeUuid.value)
     return null
-  return nodesStore.nodes.find(node => node.uuid === selectedPingNodeUuid.value) ?? null
+  return nodesStore.nodesByUuid.get(selectedPingNodeUuid.value) ?? null
 })
 
 const pingDialogOpen = computed({
@@ -188,7 +190,7 @@ function getNodeItemTransitionStyle(index: number): Record<string, string> {
               </TabsList>
             </div>
             <div class="ml-auto search flex max-w-full gap-2 items-center pointer-events-auto">
-              <DataTooltip :content="String(offlineNodes.length)" class="h-8 shrink-0">
+              <DataTooltip :content="String(offlineNodes.length)" touch-behavior="passthrough" class="h-8 shrink-0">
                 <Button
                   variant="outline" size="icon" :aria-label="`仅看离线节点，${offlineNodes.length} 台离线`"
                   :aria-pressed="showOfflineOnly"
@@ -313,11 +315,11 @@ function getNodeItemTransitionStyle(index: number): Record<string, string> {
                   class="absolute inset-x-0 inset-y-[-50%] h-[200%] w-full skew-y-[-18deg] fill-black/40 stroke-black/50 mix-blend-overlay dark:fill-white/2.5 dark:stroke-white/5"
                 >
                   <defs>
-                    <pattern id="_S_1_" width="72" height="56" patternUnits="userSpaceOnUse" x="-12" y="4">
+                    <pattern :id="dialogPatternId" width="72" height="56" patternUnits="userSpaceOnUse" x="-12" y="4">
                       <path d="M.5 56V.5H72" fill="none" />
                     </pattern>
                   </defs>
-                  <rect width="100%" height="100%" stroke-width="0" fill="url(#_S_1_)" /><svg
+                  <rect width="100%" height="100%" stroke-width="0" :fill="`url(#${dialogPatternId})`" /><svg
                     x="-12" y="4"
                     class="overflow-visible"
                   >

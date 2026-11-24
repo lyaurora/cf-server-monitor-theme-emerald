@@ -5,13 +5,14 @@ import { computed, onMounted, ref } from 'vue'
 import VChart from 'vue-echarts'
 import { Empty } from '@/components/ui/empty'
 import { Spinner } from '@/components/ui/spinner'
+import { escapeHtml } from '@/composables/useChartTheme'
 import { useAppStore } from '@/stores/app'
 import { useNodesStore } from '@/stores/nodes'
 import { getApiAssetUrl } from '@/utils/api'
 import { ensureWorldMapRegistered } from '@/utils/echartsWorldMap'
 import { getCoordByCode, getCountryCodeFromRegion } from '@/utils/geoHelper'
 import { getRegionDisplayName } from '@/utils/regionHelper'
-import '@/utils/echarts'
+import '@/utils/echartsMap'
 
 interface EarthMapPoint {
   code: string
@@ -33,16 +34,12 @@ const mapName = ref<string>()
 const loading = ref(true)
 const loadError = ref<string | null>(null)
 
-const regionDisplayNames = typeof Intl.DisplayNames === 'function'
-  ? new Intl.DisplayNames(['zh-Hans'], { type: 'region' })
-  : null
-
 function resolveCountryDisplayName(region: string, code: string): string {
   const regionName = getRegionDisplayName(region)
   if (regionName !== region)
     return regionName
 
-  return regionDisplayNames?.of(code) ?? code
+  return getRegionDisplayName(code)
 }
 
 const points = computed<EarthMapPoint[]>(() => {
@@ -157,7 +154,7 @@ const chartOption = computed<EChartsOption>(() => ({
       const dot = (color: string) => `<span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:${color}"></span>`
       const online = `<span style="display:flex;gap:4px;align-items:center">${dot(chartThemeColors.value.dotEmerald)} ${p.data.online}</span>`
       const offline = p.data.offline > 0 ? ` <span style="display:flex;gap:4px;align-items:center">${dot(chartThemeColors.value.dotYellow)} ${p.data.offline}</span>` : ''
-      return `<div style="line-height:1.4"><span style="display:flex;gap:2px;align-items:center;">${flag}${p.name}</span><div style="display:flex;gap:8px;align-items:center;color:${chartThemeColors.value.textSecondary}">${online}${offline}</div></div>`
+      return `<div style="line-height:1.4"><span style="display:flex;gap:2px;align-items:center;">${flag}${escapeHtml(p.name)}</span><div style="display:flex;gap:8px;align-items:center;color:${chartThemeColors.value.textSecondary}">${online}${offline}</div></div>`
     },
   },
   geo: {
@@ -249,10 +246,10 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="relative h-full border-none" content-class="h-full !p-0">
+  <div class="relative h-full border-none">
     <!-- 预加载国旗图片，避免 tooltip 重复请求 -->
     <div class="hidden">
-      <img v-for="point in points" :key="point.code" :src="getApiAssetUrl(`flags/${point.code.toLowerCase()}.svg`)">
+      <img v-for="point in points" :key="point.code" :src="getApiAssetUrl(`flags/${point.code.toLowerCase()}.svg`)" alt="">
     </div>
     <div class="relative flex h-88 flex-col items-center">
       <div

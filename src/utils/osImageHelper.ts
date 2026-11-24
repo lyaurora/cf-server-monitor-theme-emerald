@@ -12,6 +12,21 @@ interface OSConfig {
 }
 
 const OS_NAME_SPLIT_REGEX = /[\s/]+/
+const REGEX_SPECIAL_CHARS = /[.*+?^${}()|[\]\\]/g
+const ASCII_LETTER_REGEX = /[a-z]/i
+
+function escapeRegex(value: string): string {
+  return value.replace(REGEX_SPECIAL_CHARS, '\\$&')
+}
+
+function createKeywordMatcher(keyword: string): RegExp {
+  const escaped = escapeRegex(keyword)
+  const startsWithLetter = ASCII_LETTER_REGEX.test(keyword[0] ?? '')
+  const endsWithLetter = ASCII_LETTER_REGEX.test(keyword.at(-1) ?? '')
+  const prefix = startsWithLetter ? '(?:^|[^a-z])' : ''
+  const suffix = endsWithLetter ? '(?:$|[^a-z])' : ''
+  return new RegExp(`${prefix}${escaped}${suffix}`)
+}
 
 // 操作系统匹配组
 const osConfigs: OSConfig[] = [
@@ -149,6 +164,11 @@ const defaultOSConfig: OSConfig = {
   keywords: ['unknown'],
 }
 
+const compiledOSConfigs = osConfigs.map(config => ({
+  config,
+  matchers: config.keywords.map(createKeywordMatcher),
+}))
+
 /**
  * 根据输入字符串查找匹配的操作系统配置
  * @param osString - 操作系统相关的字符串
@@ -161,12 +181,10 @@ function findOSConfig(osString: string): OSConfig {
 
   const normalizedInput = osString.toLowerCase().trim()
 
-  // 遍历匹配配置
-  for (const config of osConfigs) {
-    for (const keyword of config.keywords) {
-      if (normalizedInput.includes(keyword)) {
-        return config
-      }
+  // 遍历匹配配置（带词边界，避免 aarch64 误命中 arch 或 debug 误命中 deb）
+  for (const { config, matchers } of compiledOSConfigs) {
+    if (matchers.some(matcher => matcher.test(normalizedInput))) {
+      return config
     }
   }
 

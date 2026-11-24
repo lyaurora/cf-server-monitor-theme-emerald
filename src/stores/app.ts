@@ -1,6 +1,6 @@
 import type { EarthViewMode, NodeViewMode, PublicSettings, ThemeMode } from '@/utils/api'
 import type { ByteDecimalsConfig } from '@/utils/helper'
-import { useEventListener, usePreferredDark, useStorageAsync } from '@vueuse/core'
+import { useDebounceFn, useEventListener, usePreferredDark, useStorage } from '@vueuse/core'
 import { defineStore } from 'pinia'
 import { computed, nextTick, ref, watch } from 'vue'
 import { resolvePingLines, saveNodePingLines, switchPingLine } from '@/utils/api'
@@ -24,11 +24,11 @@ function isValidThemeMode(value: unknown): value is ThemeMode {
 const useAppStore = defineStore('app', () => {
   const loading = ref<boolean>(true)
 
-  // 使用 VueUse 的 useStorageAsync 实现自动持久化；null 表示用户未手动选择，回退到服务端默认主题模式
-  const storedThemeMode = useStorageAsync<ThemeMode | null>('themeMode', null, localStorage)
+  // 使用同步 useStorage 避免首屏闪烁及异步竞态；null 表示用户未手动选择，回退到服务端默认配置
+  const storedThemeMode = useStorage<ThemeMode | null>('themeMode', null)
   const lang = ref<Lang>('zh-CN')
   const publicSettings = ref<PublicSettings>()
-  const nodeSelectedGroup = useStorageAsync<string>('nodeSelectedGroup', 'all', localStorage)
+  const nodeSelectedGroup = useStorage<string>('nodeSelectedGroup', 'all')
   const isLoggedIn = ref<boolean>(false)
   const savingPingLines = ref(new Set<string>())
   let pendingPingSave = Promise.resolve()
@@ -36,8 +36,8 @@ const useAppStore = defineStore('app', () => {
   // 首页滚动位置记忆
   const homeScrollPosition = ref<number>(0)
 
-  // 使用 null 表示未设置，等待主题配置加载后决定
-  const storedViewMode = useStorageAsync<NodeViewMode | null>('nodeViewMode', null, localStorage)
+  // 使用 null 表示未设置，始终随主题默认视图变化，直到用户手动切换
+  const storedViewMode = useStorage<NodeViewMode | null>('nodeViewMode', null)
 
   // 计算属性：从主题配置获取默认视图模式
   const defaultViewMode = computed<NodeViewMode>(() => {
@@ -143,7 +143,8 @@ const useAppStore = defineStore('app', () => {
       return image && image !== 'none'
     })
   }
-  useEventListener('resize', refreshInjectedBackground)
+  const debouncedRefreshInjectedBackground = useDebounceFn(refreshInjectedBackground, 150)
+  useEventListener('resize', debouncedRefreshInjectedBackground)
 
   const backgroundType = computed<'image' | 'video'>(() => {
     return publicSettings.value?.themeSettings.backgroundType ?? 'image'
@@ -165,11 +166,10 @@ const useAppStore = defineStore('app', () => {
     return publicSettings.value?.themeSettings.backgroundOverlay ?? 0
   })
 
-  // 当 publicSettings 加载后，如果 localStorage 没有保存过视图模式或值为非法值，使用默认值
-  watch(publicSettings, (settings) => {
-    if (settings && !isValidViewMode(storedViewMode.value)) {
-      // 触发 computed setter，会自动保存到 localStorage
-      storedViewMode.value = defaultViewMode.value
+  // 校验存储的视图模式；仅在非法值时清除，不主动将服务端默认值写死到 localStorage
+  watch(storedViewMode, (mode) => {
+    if (mode !== null && !isValidViewMode(mode)) {
+      storedViewMode.value = null
     }
   }, { immediate: true })
 

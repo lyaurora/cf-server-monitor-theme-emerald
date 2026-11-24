@@ -48,6 +48,7 @@ const useNodesStore = defineStore('nodes', () => {
   const pingHistoryByUuid = shallowReactive<Record<string, PingHistoryPoint[]>>(Object.create(null))
   const pingNow = useNow({ interval: 60_000 })
   const pageLoading = ref(false)
+  const pageError = ref<'not-found' | 'forbidden' | 'network' | null>(null)
   const pingHistoryConfig = ref<PingHistoryConfig>({ ...PING_HISTORY_DEFAULTS })
   let lastEarthSnapshotAt = 0
 
@@ -321,6 +322,18 @@ const useNodesStore = defineStore('nodes', () => {
   }
 
   /**
+   * 移除单个不存在的节点（不影响其他已缓存节点）
+   */
+  function removeNode(uuid: string): void {
+    const index = nodes.value.findIndex(node => node.uuid === uuid)
+    if (index !== -1) {
+      nodes.value.splice(index, 1)
+      delete pingHistoryByUuid[uuid]
+      refreshEarthNodes(true)
+    }
+  }
+
+  /**
    * 清空所有节点数据
    */
   function clearNodes(): void {
@@ -338,6 +351,7 @@ const useNodesStore = defineStore('nodes', () => {
     pingNow,
     pingSampleIntervalMs,
     pageLoading,
+    pageError,
     // 计算属性
     groups,
     nodesByUuid,
@@ -349,6 +363,7 @@ const useNodesStore = defineStore('nodes', () => {
     recordPingSample,
     configurePingHistory,
     sortNodesByWeight,
+    removeNode,
     clearNodes,
   }
 })

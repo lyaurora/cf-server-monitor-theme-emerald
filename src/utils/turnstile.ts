@@ -28,6 +28,11 @@ function loadTurnstile(): Promise<TurnstileApi> {
 
   turnstileScriptPromise = new Promise((resolve, reject) => {
     const script = document.createElement('script')
+    const fail = () => {
+      script.remove()
+      turnstileScriptPromise = null
+      reject(new Error('Turnstile SDK 加载失败'))
+    }
     script.src = TURNSTILE_SCRIPT
     script.async = true
     script.defer = true
@@ -36,9 +41,9 @@ function loadTurnstile(): Promise<TurnstileApi> {
       if (api)
         resolve(api)
       else
-        reject(new Error('Turnstile SDK 加载失败'))
+        fail()
     }
-    script.onerror = () => reject(new Error('Turnstile SDK 加载失败'))
+    script.onerror = fail
     document.head.appendChild(script)
   })
   return turnstileScriptPromise

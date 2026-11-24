@@ -9,6 +9,7 @@ import { Empty } from '@/components/ui/empty'
 import { Spinner } from '@/components/ui/spinner'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useBackgroundSurface } from '@/composables/useBackgroundSurface'
+import { formatChartTooltipTime, renderTooltipRow, useChartTheme } from '@/composables/useChartTheme'
 import { useAppStore } from '@/stores/app'
 import { useNodesStore } from '@/stores/nodes'
 import { fetchPingHistory } from '@/utils/api'
@@ -25,19 +26,10 @@ const appStore = useAppStore()
 const { pickSurfaceClass } = useBackgroundSurface()
 const nodesStore = useNodesStore()
 const nodeInfo = computed(() => nodesStore.nodesByUuid.get(props.uuid))
-const isDark = computed(() => appStore.isDark)
-
-// 图表主题相关颜色
-const chartThemeColors = computed(() => ({
-  text: isDark.value ? 'rgba(255, 255, 255, 0.85)' : 'rgba(0, 0, 0, 0.85)',
-  textSecondary: isDark.value ? 'rgba(255, 255, 255, 0.55)' : 'rgba(0, 0, 0, 0.55)',
-  textTertiary: isDark.value ? 'rgba(255, 255, 255, 0.35)' : 'rgba(0, 0, 0, 0.35)',
-  borderColor: isDark.value ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.06)',
-  splitLineColor: isDark.value ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.06)',
-  tooltipBg: isDark.value ? 'rgba(40, 40, 40, 0.95)' : 'rgba(255, 255, 255, 0.8)',
-  tooltipShadow: isDark.value ? 'rgba(0, 0, 0, 0.4)' : 'rgba(0, 0, 0, 0.06)',
-  crosshairColor: isDark.value ? 'rgba(255, 255, 255, 0.15)' : 'rgba(0, 0, 0, 0.1)',
-}))
+const { chartThemeColors, baseTooltipConfig } = useChartTheme({
+  alwaysBlurTooltip: true,
+  lightBorderColor: 'rgba(0, 0, 0, 0.06)',
+})
 
 // 优化后的图表配色方案（多任务时使用）
 const chartColors = [
@@ -80,8 +72,12 @@ interface TaskInfo {
   loss?: number
 }
 
+interface TimedPingRecord extends PingRecord {
+  timeMs: number
+}
+
 // 数据状态
-const remoteData = shallowRef<PingRecord[]>([])
+const remoteData = shallowRef<TimedPingRecord[]>([])
 const tasks = shallowRef<TaskInfo[]>([])
 const loading = ref(false)
 const error = ref<string | null>(null)
@@ -144,11 +140,21 @@ async function fetchRecords() {
 
 // ==================== 数据处理 ====================
 
-function mergePingRecords(records: PingRecord[]): PingRecord[] {
-  const merged = [...new Map(records.map(record => [`${record.task_id}:${record.time}`, record])).values()]
-    .sort((a, b) => Date.parse(a.time) - Date.parse(b.time))
-  const cutoff = Date.parse(merged.at(-1)?.time ?? '') - selectedHours.value * 3_600_000
-  return merged.filter(record => Date.parse(record.time) >= cutoff)
+function mergePingRecords(records: PingRecord[]): TimedPingRecord[] {
+  const deduped = new Map<string, TimedPingRecord>()
+  for (const record of records) {
+    const timeMs = 'timeMs' in record && typeof (record as TimedPingRecord).timeMs === 'number'
+      ? (record as TimedPingRecord).timeMs
+      : Date.parse(record.time)
+    if (!Number.isFinite(timeMs))
+      continue
+    deduped.set(`${record.task_id}:${record.time}`, { ...record, timeMs })
+  }
+  const merged = [...deduped.values()].sort((a, b) => a.timeMs - b.timeMs)
+  if (!merged.length)
+    return []
+  const cutoff = merged.at(-1)!.timeMs - selectedHours.value * 3_600_000
+  return merged.filter(record => record.timeMs >= cutoff)
 }
 
 const mergedData = computed(() => {
@@ -159,9 +165,7 @@ const mergedData = computed(() => {
   const grouped: Map<number, Record<string, unknown>> = new Map()
 
   for (const rec of data) {
-    const ts = dayjs(rec.time).valueOf()
-    if (!Number.isFinite(ts))
-      continue
+    const ts = rec.timeMs
     if (!grouped.has(ts))
       grouped.set(ts, { time: ts })
 
@@ -204,21 +208,6 @@ function formatTime(time: number, showDate: boolean): string {
   return date.format('HH:mm')
 }
 
-function formatTimeForTooltip(time: number, hours: number): string {
-  const date = dayjs(time)
-  if (hours < 24) {
-    return date.format('HH:mm:ss')
-  }
-  return date.format('MM/DD HH:mm')
-}
-
-const HTML_ESCAPE_REGEX = /[&<>"']/g
-const HTML_ENTITIES: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', '\'': '&#39;' }
-
-function escapeHtml(value: string): string {
-  return value.replace(HTML_ESCAPE_REGEX, character => HTML_ENTITIES[character]!)
-}
-
 const showDateInAxis = computed(() => selectedHours.value >= 24)
 
 // ==================== 任务选择 ====================
@@ -244,9 +233,8 @@ function percentile(sorted: number[], ratio: number): number | undefined {
   return sorted[index]
 }
 
-function sampleIntervalSeconds(records: PingRecord[]): number | undefined {
-  const timestamps = [...new Set(records.map(record => dayjs(record.time).valueOf()))]
-    .filter(Number.isFinite)
+function sampleIntervalSeconds(records: TimedPingRecord[]): number | undefined {
+  const timestamps = [...new Set(records.map(record => record.timeMs))]
     .sort((a, b) => a - b)
   if (timestamps.length < 2)
     return undefined
@@ -266,7 +254,7 @@ const latestValues = computed(() => {
   if (!tasks.value.length)
     return []
 
-  const recordsByTask = new Map<number, PingRecord[]>()
+  const recordsByTask = new Map<number, TimedPingRecord[]>()
   for (const record of remoteData.value) {
     const list = recordsByTask.get(record.task_id)
     if (list)
@@ -352,8 +340,7 @@ const packetLossMarkers = computed(() => {
     const timestamps = remoteData.value
       .filter(record => record.task_id === task.id
         && ((record.loss ?? 0) > 0 || record.value < 0))
-      .map(record => dayjs(record.time).valueOf())
-      .filter(Number.isFinite)
+      .map(record => record.timeMs)
     markers.set(task.id, [...new Set(timestamps)].sort((a, b) => a - b))
   }
   return markers
@@ -382,45 +369,21 @@ function hideAllTasks() {
 
 // ==================== 图表配置 ====================
 
-// 通用 Tooltip 配置
-const baseTooltipConfig = computed(() => ({
-  trigger: 'axis' as const,
-  confine: false,
-  backgroundColor: chartThemeColors.value.tooltipBg,
-  borderColor: 'transparent',
-  borderWidth: 0,
-  borderRadius: 6,
-  textStyle: {
-    color: chartThemeColors.value.text,
-    fontSize: 12,
-    lineHeight: 20,
-  },
-  extraCssText: `backdrop-filter: blur(5px);z-index:9;box-shadow:0 0 0 1px ${chartThemeColors.value.tooltipShadow}, 0 0 16px ${chartThemeColors.value.tooltipShadow}`,
-  axisPointer: {
-    type: 'cross' as const,
-    crossStyle: {
-      color: chartThemeColors.value.textTertiary,
-    },
-    lineStyle: {
-      color: chartThemeColors.value.crosshairColor,
-      width: 1,
-      type: 'dashed' as const,
-    },
-    shadowStyle: {
-      color: chartThemeColors.value.crosshairColor,
-    },
-  },
-}))
-
 const pingChartOption = computed(() => {
   const taskList = tasks.value
   const data = chartData.value
   const hours = selectedHours.value
   const rowsByTime = new Map(data.map(row => [row.time as number, row]))
-  const timestamps = remoteData.value
-    .filter(record => selectedTaskIds.value.includes(record.task_id))
-    .map(record => dayjs(record.time).valueOf())
-    .filter(Number.isFinite)
+  const selectedIdSet = new Set(selectedTaskIds.value)
+  let minTs: number | undefined
+  let maxTs: number | undefined
+  for (const record of remoteData.value) {
+    if (!selectedIdSet.has(record.task_id))
+      continue
+    if (minTs === undefined)
+      minTs = record.timeMs
+    maxTs = record.timeMs
+  }
 
   // 构建 series，确保颜色与卡片一致
   const series = taskList.map((task) => {
@@ -472,30 +435,30 @@ const pingChartOption = computed(() => {
         const firstParam = p[0]
         if (!firstParam)
           return ''
-        const rowData = rowsByTime.get(firstParam.value[0])
-        if (!rowData)
-          return ''
-
-        const time = rowData.time as number
-        const timeStr = formatTimeForTooltip(time, hours)
+        const time = firstParam.value[0]
+        const paramByTaskId = new Map(p.map(item => [item.seriesId, item]))
+        const timeStr = formatChartTooltipTime(time, hours)
         let html = `<div style="font-weight:600;margin-bottom:6px;color:${chartThemeColors.value.textSecondary}">${timeStr}</div>`
         html += '<div style="display:flex;flex-direction:column;gap:4px">'
 
         // 按延迟从高到低显示，与曲线上下位置一致，仅包含图例中可见的线路
-        const visibleTaskIds = new Set(p.map(item => item.seriesId))
-        const sortedParams = taskList.filter(task => visibleTaskIds.has(String(task.id))).map(task => ({
-          taskId: task.id,
-          seriesName: task.name,
-          value: rowData[task.id] as number | null,
-          timedOut: rowData[`timeout_${task.id}`] === true,
-        })).sort((a, b) => (b.value ?? 0) - (a.value ?? 0))
+        const sortedParams = taskList.filter(task => paramByTaskId.has(String(task.id))).map((task) => {
+          const item = paramByTaskId.get(String(task.id))!
+          const itemRow = rowsByTime.get(item.value[0])
+          const value = itemRow ? (itemRow[task.id] as number | null) : item.value[1]
+          return {
+            taskId: task.id,
+            seriesName: task.name,
+            value,
+            timedOut: itemRow?.[`timeout_${task.id}`] === true,
+          }
+        }).sort((a, b) => (b.value ?? 0) - (a.value ?? 0))
 
         for (const item of sortedParams) {
           if (item.timedOut || (item.value !== null && item.value !== undefined)) {
-            const color = colorMap.get(item.taskId) || chartColors[0]
-            const colorDot = `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${color};margin-right:8px;flex-shrink:0"></span>`
+            const color = colorMap.get(item.taskId) || chartColors[0]!
             const valueText = item.timedOut ? '超时' : `${Math.round(item.value!)} ms`
-            html += `<div style="display:flex;align-items:center">${colorDot}<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(item.seriesName)}</span><span style="margin-left:auto;font-weight:600;margin-left:16px;font-variant-numeric:tabular-nums">${valueText}</span></div>`
+            html += renderTooltipRow(color, item.seriesName, valueText, true)
           }
         }
         html += '</div>'
@@ -518,8 +481,8 @@ const pingChartOption = computed(() => {
     grid: chartMargin,
     xAxis: {
       type: 'time',
-      min: timestamps[0],
-      max: timestamps.at(-1),
+      min: minTs,
+      max: maxTs,
       axisLabel: {
         formatter: (value: number) => formatTime(value, showDateInAxis.value),
         fontSize: 11,
@@ -588,7 +551,7 @@ onBeforeUnmount(() => fetchRequestId++)
 <template>
   <div class="flex flex-col gap-4">
     <!-- 时间选择器 -->
-    <Tabs v-model="selectedView" class="w-full items-center">
+    <Tabs v-model="selectedView" class="w-full flex-row items-center">
       <div class="min-w-0 flex-1 overflow-x-auto pointer-events-auto">
         <TabsList :class="pickSurfaceClass('w-max h-8 bg-background/60 rounded-md', 'w-max h-8 bg-background/50 backdrop-blur-xl rounded-md')">
           <TabsTrigger
@@ -640,8 +603,6 @@ onBeforeUnmount(() => fetchRequestId++)
             :class="[
               !selectedTaskIds.includes(task.id) && 'opacity-30',
             ]"
-            :onmouseover="(e: MouseEvent) => ((e.currentTarget as HTMLElement).style.borderColor = task.color)"
-            :onmouseout="(e: MouseEvent) => ((e.currentTarget as HTMLElement).style.borderColor = '')"
             @click="toggleTask(task.id)"
             @keydown.enter.self.prevent="toggleTask(task.id)"
             @keydown.space.self.prevent="toggleTask(task.id)"
@@ -699,13 +660,13 @@ onBeforeUnmount(() => fetchRequestId++)
               </div>
               <div class="text-xs mt-1 flex gap-1.5 items-center text-muted-foreground">
                 <DataTooltip
-                  v-if="task.timedOut" as="span" placement="cursor" content="最新探测" tabindex="0"
+                  v-if="task.timedOut" as="span" placement="cursor" touch-behavior="passthrough" content="最新探测" tabindex="0"
                   class="text-rose-500 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
                   超时 ·
                 </DataTooltip>
                 <DataTooltip
-                  as="span" placement="cursor" content="平均延迟" tabindex="0"
+                  as="span" placement="cursor" touch-behavior="passthrough" content="平均延迟" tabindex="0"
                   class="font-medium rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
                   {{ task.avg !== undefined ? `${Math.round(task.avg)}ms` : '-' }}
@@ -713,7 +674,7 @@ onBeforeUnmount(() => fetchRequestId++)
                 <template v-if="task.loss !== undefined">
                   <span class="opacity-60">·</span>
                   <DataTooltip
-                    as="span" placement="cursor" content="丢包率" tabindex="0"
+                    as="span" placement="cursor" touch-behavior="passthrough" content="丢包率" tabindex="0"
                     class="rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   >
                     {{ task.loss.toFixed(2) }}%
@@ -722,7 +683,7 @@ onBeforeUnmount(() => fetchRequestId++)
                 <template v-if="task.p99_p50_ratio !== undefined">
                   <span class="opacity-60">·</span>
                   <DataTooltip
-                    as="span" placement="cursor" content="波动率" tabindex="0"
+                    as="span" placement="cursor" touch-behavior="passthrough" content="波动率" tabindex="0"
                     class="rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   >
                     {{ task.p99_p50_ratio.toFixed(2) }}

@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, onUnmounted, ref, watch } from 'vue'
+import { computed, onUnmounted, ref, useId, watch } from 'vue'
 import { useAppStore } from '@/stores/app'
 
 const appStore = useAppStore()
+const patternId = useId()
 
 const isLoaded = ref(false)
 const hasError = ref(false)
@@ -147,11 +148,11 @@ onUnmounted(() => {
               class="absolute inset-x-0 inset-y-[-50%] h-[200%] w-full skew-y-[-18deg] fill-black/40 stroke-black/50 mix-blend-overlay dark:fill-white/2.5 dark:stroke-white/5"
             >
               <defs>
-                <pattern id="_S_1_" width="72" height="56" patternUnits="userSpaceOnUse" x="-12" y="4">
+                <pattern :id="patternId" width="72" height="56" patternUnits="userSpaceOnUse" x="-12" y="4">
                   <path d="M.5 56V.5H72" fill="none" />
                 </pattern>
               </defs>
-              <rect width="100%" height="100%" stroke-width="0" fill="url(#_S_1_)" /><svg
+              <rect width="100%" height="100%" stroke-width="0" :fill="`url(#${patternId})`" /><svg
                 x="-12" y="4"
                 class="overflow-visible"
               >
@@ -176,7 +177,7 @@ onUnmounted(() => {
         <div
           v-if="backgroundType === 'image'"
           class="background-image"
-          :style="{ backgroundImage: `url(${currentUrl})` }"
+          :style="{ backgroundImage: `url(${JSON.stringify(currentUrl)})` }"
         />
         <video
           v-else-if="backgroundType === 'video'"

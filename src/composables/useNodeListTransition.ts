@@ -1,13 +1,27 @@
 import type { VNode } from 'vue'
 
+function resetLeavingStyle(element: Element) {
+  const style = (element as HTMLElement).style
+  style.position = ''
+  style.left = ''
+  style.top = ''
+  style.width = ''
+  style.height = ''
+  style.pointerEvents = ''
+}
+
 export function useNodeListTransition() {
   const positions = new WeakMap<Element, { left: string, top: string, width: string, height: string }>()
   const leaving = new Map<Element, HTMLElement>()
 
   function beforeUpdate(vnode: VNode) {
-    const container = vnode.el as HTMLElement
-    // Capture every item before any leaving item releases its space.
+    const container = vnode.el as HTMLElement | null
+    if (!container)
+      return
+    // Capture every non-leaving item before any leaving item releases its space.
     for (const child of container.children) {
+      if (leaving.has(child))
+        continue
       const element = child as HTMLElement
       positions.set(element, {
         left: `${element.offsetLeft}px`,
@@ -19,7 +33,9 @@ export function useNodeListTransition() {
   }
 
   function beforeLeave(element: Element) {
-    const container = element.parentElement!
+    const container = element.parentElement
+    if (!container)
+      return
     // Keep scrolling containers from clipping items while they move or fade out.
     if (!container.style.minHeight)
       container.style.minHeight = `${container.offsetHeight}px`
@@ -33,6 +49,8 @@ export function useNodeListTransition() {
   function afterLeave(element: Element) {
     const container = leaving.get(element)
     leaving.delete(element)
+    // Clear inline styles so elements kept by @leave-cancelled do not stay stuck absolute / unclickable.
+    resetLeavingStyle(element)
     if (container && ![...leaving.values()].includes(container))
       container.style.minHeight = ''
   }

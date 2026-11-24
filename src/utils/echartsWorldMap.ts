@@ -1,6 +1,5 @@
 import { registerMap } from 'echarts/core'
-import { fetchWithTimeout } from '@/utils/financeHelper'
-import { emojiToRegionMap } from '@/utils/regionHelper'
+import { getRegionAliasToCodeMap } from '@/utils/regionHelper'
 
 type WorldGeoJson = Exclude<
   Parameters<typeof registerMap>[1],
@@ -8,7 +7,7 @@ type WorldGeoJson = Exclude<
 >
 
 const WORLD_MAP_NAME = 'cf-server-monitor-world'
-// 世界地图数据源：多 CDN 依次回退，避免单一 CDN 故障影响地图展示
+// 世界地图数据源：多 CDN 阶梯竞速回退，避免单一 CDN 故障或阻塞拖慢地图展示
 const WORLD_GEO_JSON_URLS = [
   'https://cdn.jsdelivr.net/gh/apache/echarts-www@master/asset/map/json/world.json',
   'https://fastly.jsdelivr.net/gh/apache/echarts-www@master/asset/map/json/world.json',
@@ -128,22 +127,7 @@ function normalizeCountryName(name: string): string {
   return name.trim().toLowerCase()
 }
 
-function createAliasToCodeMap(): Map<string, string> {
-  const aliasToCodeMap = new Map<string, string>()
-  for (const info of Object.values(emojiToRegionMap)) {
-    for (const alias of [info.code, info.en, info.zh, ...info.aliases]) {
-      const key = normalizeCountryName(alias)
-      if (!key || aliasToCodeMap.has(key))
-        continue
-      aliasToCodeMap.set(key, info.code)
-    }
-  }
-  return aliasToCodeMap
-}
-
-const aliasToCodeMap = createAliasToCodeMap()
-
-function resolveCountryCode(name: string): string | null {
+function resolveCountryCode(name: string, aliasToCodeMap: Map<string, string>): string | null {
   const key = normalizeCountryName(name)
   if (!key)
     return null
@@ -151,9 +135,10 @@ function resolveCountryCode(name: string): string | null {
 }
 
 function normalizeWorldGeoJson(worldGeoJson: WorldGeoJson): WorldGeoJson {
+  const aliasToCodeMap = getRegionAliasToCodeMap()
   for (const feature of worldGeoJson.features) {
     const name = typeof feature.properties?.name === 'string' ? feature.properties.name : ''
-    const code = resolveCountryCode(name)
+    const code = resolveCountryCode(name, aliasToCodeMap)
     if (!code)
       continue
 
@@ -163,31 +148,88 @@ function normalizeWorldGeoJson(worldGeoJson: WorldGeoJson): WorldGeoJson {
   return worldGeoJson
 }
 
+async function fetchWorldGeoJsonFromUrl(url: string, timeoutMs: number, parentSignal: AbortSignal): Promise<WorldGeoJson> {
+  const controller = new AbortController()
+  const onParentAbort = () => controller.abort()
+  if (parentSignal.aborted)
+    controller.abort()
+  else
+    parentSignal.addEventListener('abort', onParentAbort, { once: true })
+  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs)
+
+  try {
+    const response = await fetch(url, { signal: controller.signal })
+    if (!response.ok)
+      throw new Error(`HTTP ${response.status}`)
+
+    const data = await response.json() as unknown
+    if (!isValidWorldGeoJson(data))
+      throw new Error('Invalid world GeoJSON')
+
+    return normalizeWorldGeoJson(data)
+  }
+  catch (error) {
+    if (!parentSignal.aborted)
+      console.warn(`加载世界地图失败: ${url}`, error)
+    throw error
+  }
+  finally {
+    window.clearTimeout(timeoutId)
+    parentSignal.removeEventListener('abort', onParentAbort)
+  }
+}
+
 async function loadWorldGeoJson(): Promise<WorldGeoJson> {
   const cachedWorldGeoJson = readCachedWorldGeoJson()
   if (cachedWorldGeoJson)
     return cachedWorldGeoJson
 
-  for (const url of WORLD_GEO_JSON_URLS) {
-    try {
-      const response = await fetchWithTimeout(url, 15000)
-      if (!response.ok)
-        continue
+  const raceController = new AbortController()
+  try {
+    const primary = fetchWorldGeoJsonFromUrl(WORLD_GEO_JSON_URLS[0]!, 8000, raceController.signal)
+    const fallbackPromise = new Promise<WorldGeoJson>((resolve, reject) => {
+      let started = false
+      let timer: number | undefined
+      const startFallbacks = () => {
+        if (started)
+          return
+        started = true
+        if (raceController.signal.aborted) {
+          reject(new Error('Aborted'))
+          return
+        }
+        void Promise.any(WORLD_GEO_JSON_URLS.slice(1).map(url => fetchWorldGeoJsonFromUrl(url, 8000, raceController.signal)))
+          .then(resolve, reject)
+      }
+      const onRaceAbort = () => {
+        window.clearTimeout(timer)
+        if (!started) {
+          started = true
+          reject(new Error('Aborted'))
+        }
+      }
+      raceController.signal.addEventListener('abort', onRaceAbort, { once: true })
+      timer = window.setTimeout(startFallbacks, 2500)
+      primary.then(
+        () => window.clearTimeout(timer),
+        () => {
+          window.clearTimeout(timer)
+          startFallbacks()
+        },
+      )
+    })
 
-      const data = await response.json() as unknown
-      if (!isValidWorldGeoJson(data))
-        continue
-
-      const worldGeoJson = normalizeWorldGeoJson(data)
-      writeCachedWorldGeoJson(worldGeoJson)
-      return worldGeoJson
-    }
-    catch (error) {
-      console.warn(`加载世界地图失败: ${url}`, error)
-    }
+    const worldGeoJson = await Promise.any([primary, fallbackPromise])
+    raceController.abort()
+    writeCachedWorldGeoJson(worldGeoJson)
+    return worldGeoJson
   }
-
-  throw new Error('Failed to load world map from all CDNs')
+  catch {
+    throw new Error('Failed to load world map from all CDNs')
+  }
+  finally {
+    raceController.abort()
+  }
 }
 
 export async function ensureWorldMapRegistered(): Promise<string> {

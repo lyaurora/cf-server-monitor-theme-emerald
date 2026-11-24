@@ -46,6 +46,8 @@ const DEFAULT_PHI = normalizePhi(-Math.PI / 2 - CHINA_COORD[1] * Math.PI / 180)
 const GLOBE_RADIUS = 0.8
 const GLOBE_SCALE = 1
 const MARKER_ELEVATION = 0
+const ORIENTATION_DAMPING = 0.22
+const ORIENTATION_IDLE_EPSILON = 1e-4
 let phi = DEFAULT_PHI
 let targetPhi = phi
 let theta = INITIAL_THETA
@@ -53,7 +55,7 @@ let targetTheta = INITIAL_THETA
 let isPointerDown = false
 let lastPointerX = 0
 let lastPointerY = 0
-let staticRedrawUntil = 0
+let initialFrameId: number | null = null
 
 function normalizePhi(value: number): number {
   const circle = Math.PI * 2
@@ -76,17 +78,9 @@ function resetStoppedView() {
   targetTheta = INITIAL_THETA
 }
 
-function triggerStaticRedrawWindow(duration = 1500) {
-  if (typeof performance === 'undefined') {
-    staticRedrawUntil = Date.now() + duration
-    return
-  }
-  staticRedrawUntil = performance.now() + duration
-}
-
-function shouldKeepStaticRedraw(): boolean {
-  const now = typeof performance === 'undefined' ? Date.now() : performance.now()
-  return now < staticRedrawUntil
+function hasPendingOrientationMotion(): boolean {
+  return Math.abs(targetPhi - phi) >= ORIENTATION_IDLE_EPSILON
+    || Math.abs(targetTheta - theta) >= ORIENTATION_IDLE_EPSILON
 }
 
 // 减少高采样导致的性能问题
@@ -164,7 +158,35 @@ const userCoord = computed<[number, number] | null>(() => {
 })
 
 const clusterOverlayEls = new Map<string, HTMLDivElement>()
+const clusterOverlayVisible = new Map<string, boolean>()
 const clusterOverlayRefBinders = new Map<string, (el: Element | ComponentPublicInstance | null) => void>()
+
+interface ProjectionFrame {
+  width: number
+  height: number
+  aspect: number
+  cosTheta: number
+  sinTheta: number
+  cosPhi: number
+  sinPhi: number
+  markerRadius: number
+  visibleThreshold: number
+}
+
+function createProjectionFrame(): ProjectionFrame {
+  const { width, height } = getRenderSize()
+  return {
+    width,
+    height,
+    aspect: height > 0 ? width / height : 1,
+    cosTheta: Math.cos(theta),
+    sinTheta: Math.sin(theta),
+    cosPhi: Math.cos(phi),
+    sinPhi: Math.sin(phi),
+    markerRadius: GLOBE_RADIUS + MARKER_ELEVATION,
+    visibleThreshold: GLOBE_RADIUS * GLOBE_RADIUS,
+  }
+}
 
 function coordToGlobePoint([lat, lon]: [number, number]): [number, number, number] {
   const latRad = lat * Math.PI / 180
@@ -185,45 +207,44 @@ function getRenderSize() {
 
 // iOS Safari 对 cobe 内部 marker anchor 的 DOM/style 行为不稳定，
 // overlay 改为组件内自行投影定位，避免回落到容器左上角。
-function syncClusterOverlayPosition(cluster: RegionCluster, el: HTMLDivElement) {
-  const { width, height } = getRenderSize()
-  if (width <= 0 || height <= 0) {
-    el.style.opacity = '0'
-    el.style.filter = 'blur(20px)'
+function syncClusterOverlayPosition(cluster: RegionCluster, el: HTMLDivElement, frame: ProjectionFrame) {
+  if (frame.width <= 0 || frame.height <= 0) {
+    if (clusterOverlayVisible.get(cluster.code) !== false) {
+      clusterOverlayVisible.set(cluster.code, false)
+      el.style.opacity = '0'
+      el.style.filter = 'blur(20px)'
+    }
     return
   }
 
-  const aspect = width / height
-  const cosTheta = Math.cos(theta)
-  const sinTheta = Math.sin(theta)
-  const cosPhi = Math.cos(phi)
-  const sinPhi = Math.sin(phi)
-  const markerRadius = GLOBE_RADIUS + MARKER_ELEVATION
-  const visibleThreshold = GLOBE_RADIUS * GLOBE_RADIUS
   const [baseX, baseY, baseZ] = coordToGlobePoint(cluster.coord)
-  const x = baseX * markerRadius
-  const y = baseY * markerRadius
-  const z = baseZ * markerRadius
-  const screenX = cosPhi * x + sinPhi * z
-  const screenY = sinPhi * sinTheta * x + cosTheta * y - cosPhi * sinTheta * z
+  const x = baseX * frame.markerRadius
+  const y = baseY * frame.markerRadius
+  const z = baseZ * frame.markerRadius
+  const screenX = frame.cosPhi * x + frame.sinPhi * z
+  const screenY = frame.sinPhi * frame.sinTheta * x + frame.cosTheta * y - frame.cosPhi * frame.sinTheta * z
   const visible = (
-    -sinPhi * cosTheta * x + sinTheta * y + cosPhi * cosTheta * z >= 0
-    || screenX * screenX + screenY * screenY >= visibleThreshold
+    -frame.sinPhi * frame.cosTheta * x + frame.sinTheta * y + frame.cosPhi * frame.cosTheta * z >= 0
+    || screenX * screenX + screenY * screenY >= frame.visibleThreshold
   )
-  const xPx = ((screenX / aspect) * GLOBE_SCALE + 1) * width / 2
-  const yPx = ((-screenY) * GLOBE_SCALE + 1) * height / 2
+  const xPx = ((screenX / frame.aspect) * GLOBE_SCALE + 1) * frame.width / 2
+  const yPx = ((-screenY) * GLOBE_SCALE + 1) * frame.height / 2
 
   el.style.transform = `translate3d(${xPx}px, ${yPx}px, 0)`
-  el.style.opacity = visible ? '1' : '0'
-  el.style.filter = visible ? 'blur(0px)' : 'blur(20px)'
+  if (clusterOverlayVisible.get(cluster.code) !== visible) {
+    clusterOverlayVisible.set(cluster.code, visible)
+    el.style.opacity = visible ? '1' : '0'
+    el.style.filter = visible ? 'blur(0px)' : 'blur(20px)'
+  }
 }
 
 function syncClusterOverlayPositions() {
+  const frame = createProjectionFrame()
   for (const cluster of regionClusters.value) {
     const el = clusterOverlayEls.get(cluster.code)
     if (!el)
       continue
-    syncClusterOverlayPosition(cluster, el)
+    syncClusterOverlayPosition(cluster, el, frame)
   }
 }
 
@@ -231,12 +252,14 @@ function setClusterOverlayEl(code: string, el: Element | ComponentPublicInstance
   if (el instanceof HTMLDivElement) {
     el.style.willChange = 'transform, opacity, filter'
     clusterOverlayEls.set(code, el)
+    clusterOverlayVisible.delete(code)
 
     const cluster = regionClusters.value.find(item => item.code === code)
     if (cluster) {
-      syncClusterOverlayPosition(cluster, el)
+      syncClusterOverlayPosition(cluster, el, createProjectionFrame())
     }
     else {
+      clusterOverlayVisible.set(code, false)
       el.style.opacity = '0'
       el.style.filter = 'blur(20px)'
     }
@@ -244,6 +267,7 @@ function setClusterOverlayEl(code: string, el: Element | ComponentPublicInstance
   }
 
   clusterOverlayEls.delete(code)
+  clusterOverlayVisible.delete(code)
 }
 
 function bindClusterOverlayRef(code: string): (el: Element | ComponentPublicInstance | null) => void {
@@ -321,8 +345,7 @@ function updateGlobeFrame(size?: { width: number, height: number }) {
   syncClusterOverlayPositions()
 }
 
-// phi 收敛/静止时整帧跳过 globe.update，WebGL + overlay 位置更新双双归零
-const ORIENTATION_IDLE_EPSILON = 1e-5
+// phi 收敛/静止时自动暂停 rAF，WebGL + overlay 位置更新双双归零
 const { pause: pauseRaf, resume: resumeRaf } = useRafFn(
   () => {
     if (!globe)
@@ -331,26 +354,40 @@ const { pause: pauseRaf, resume: resumeRaf } = useRafFn(
     const prevTheta = theta
     if (!isPointerDown && shouldAutoRotate.value)
       targetPhi += 0.002
-    phi += (targetPhi - phi) * 1
-    theta += (targetTheta - theta) * 1
+    const damping = isPointerDown ? 0.35 : ORIENTATION_DAMPING
+    phi += (targetPhi - phi) * damping
+    theta += (targetTheta - theta) * damping
+
+    // 防止长时间自转后 phi 数值无限增大，成对平移保持差值不变
+    if (Math.abs(phi) > Math.PI * 100) {
+      const wrapped = normalizePhi(phi)
+      const shift = wrapped - phi
+      phi = wrapped
+      targetPhi += shift
+    }
+
     if (
       Math.abs(phi - prevPhi) < ORIENTATION_IDLE_EPSILON
       && Math.abs(theta - prevTheta) < ORIENTATION_IDLE_EPSILON
     ) {
-      if (!shouldAutoRotate.value && shouldKeepStaticRedraw())
+      if (!isPointerDown && !shouldAutoRotate.value) {
+        phi = targetPhi
+        theta = targetTheta
         updateGlobeFrame()
+        pauseRaf()
+      }
       return
     }
     updateGlobeFrame()
   },
-  { immediate: false }, // , fpsLimit: 30
+  { immediate: false },
 )
 
 function syncRafState() {
   if (!globe)
     return
 
-  if (shouldRender.value && (shouldAutoRotate.value || isPointerDown)) {
+  if (shouldRender.value && (shouldAutoRotate.value || isPointerDown || hasPendingOrientationMotion())) {
     resumeRaf()
     return
   }
@@ -365,12 +402,12 @@ function startGlobe() {
     return
   if (appStore.earthViewMode === 'earth-stop') {
     resetStoppedView()
-    triggerStaticRedrawWindow()
   }
   globe = createGlobe(canvasRef.value, buildInitialOptions())
   syncClusterOverlayPositions()
   // 静止地球没有自转帧，首帧需要在实际尺寸稳定后主动重绘一次。
-  requestAnimationFrame(() => {
+  initialFrameId = requestAnimationFrame(() => {
+    initialFrameId = null
     updateGlobeFrame()
   })
   // documentVisibility 同步可读；useElementVisibility 需等 IntersectionObserver 首回调
@@ -380,6 +417,10 @@ function startGlobe() {
 
 // cobe 不会清理自己创建的 wrapper，这里手动收尾。
 function stopGlobe() {
+  if (initialFrameId !== null) {
+    cancelAnimationFrame(initialFrameId)
+    initialFrameId = null
+  }
   pauseRaf()
   globe?.destroy()
   globe = null
@@ -425,7 +466,6 @@ watch(
   (mode) => {
     if (mode === 'earth-stop')
       resetStoppedView()
-    triggerStaticRedrawWindow()
     syncRafState()
   },
 )
@@ -438,8 +478,6 @@ watch(
     globe.update({ arcs: arcs.value })
     await nextTick()
     syncClusterOverlayPositions()
-    if (!shouldAutoRotate.value)
-      triggerStaticRedrawWindow(600)
   },
 )
 

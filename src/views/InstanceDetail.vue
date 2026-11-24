@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { CurrencyCode } from '@/utils/financeHelper'
 import { Icon } from '@iconify/vue'
-import { computed, defineAsyncComponent, onMounted, ref } from 'vue'
+import { computed, defineAsyncComponent, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -13,7 +13,7 @@ import { useNodesStore } from '@/stores/nodes'
 import { getApiAssetUrl } from '@/utils/api'
 import * as financeHelper from '@/utils/financeHelper'
 import { formatBytesPerSecondWithConfig, formatBytesWithConfig, formatDateTime, formatUptimeWithFormat } from '@/utils/helper'
-import { getTrafficUsed, getTrafficUsedPercentage, showTrafficProgress } from '@/utils/nodeHelper'
+import { getTrafficUsed, getTrafficUsedPercentage, hasRegion, showTrafficProgress } from '@/utils/nodeHelper'
 import { getOSImage, getOSName } from '@/utils/osImageHelper'
 import { getRegionCode, getRegionDisplayName } from '@/utils/regionHelper'
 import { formatPrice, getBillingCycleText, getExpireText, getExpireTextClass } from '@/utils/tagHelper'
@@ -56,11 +56,26 @@ onMounted(async () => {
   exchangeRates.value = rates
 })
 
+watch(() => route.params.id, () => {
+  window.scrollTo({ top: 0, behavior: 'instant' })
+})
+
 const formatBytes = (bytes: number) => formatBytesWithConfig(bytes, appStore.byteDecimals)
 const formatBytesPerSecond = (bytes: number) => formatBytesPerSecondWithConfig(bytes, appStore.byteDecimals)
 const formatUptime = (seconds: number) => formatUptimeWithFormat(seconds, 'minute')
 
-const data = computed(() => nodesStore.nodes.find(node => node.uuid === route.params.id))
+const data = computed(() => nodesStore.nodesByUuid.get(String(route.params.id ?? '')))
+const emptyStateDescription = computed(() => {
+  if (nodesStore.pageError === 'network')
+    return '加载节点失败，正在尝试重连…'
+  if (nodesStore.pageError === 'forbidden')
+    return '暂无访问权限或登录已失效'
+  return '节点不存在或已被删除'
+})
+
+function reloadCurrentPage() {
+  window.location.reload()
+}
 
 interface InfoItem {
   label: string
@@ -269,11 +284,16 @@ const trafficProgressStyle = computed(() => ({
         class="border-none transition-all rounded-md"
         :class="pickSurfaceClass('bg-background/60 hover:bg-background', 'bg-background/50 hover:bg-background backdrop-blur-xs')"
       >
-        <Empty description="节点不存在或已被删除">
+        <Empty :description="emptyStateDescription">
           <template #extra>
-            <Button @click="router.push('/')">
-              返回首页
-            </Button>
+            <div class="flex items-center gap-2">
+              <Button v-if="nodesStore.pageError === 'network' || nodesStore.pageError === 'forbidden'" variant="outline" @click="reloadCurrentPage">
+                刷新页面
+              </Button>
+              <Button @click="router.push('/')">
+                返回首页
+              </Button>
+            </div>
           </template>
         </Empty>
       </CardX>
@@ -286,6 +306,7 @@ const trafficProgressStyle = computed(() => ({
         </Button>
         <div class="text-lg font-bold flex gap-2 items-center">
           <img
+            v-if="hasRegion(data.region)"
             :src="getApiAssetUrl(`flags/${getRegionCode(data.region).toLowerCase()}.svg`)" :alt="getRegionDisplayName(data.region)"
             class="size-6 rounded-sm drop-shadow-[0_0_2px_rgba(0,0,0,0.1)]"
           >
@@ -398,7 +419,7 @@ const trafficProgressStyle = computed(() => ({
           :class="pickSurfaceClass('bg-background/60 hover:bg-background', 'bg-background/50 hover:bg-background backdrop-blur-xs')"
           content-class="pt-0"
         >
-          <div class="gap-3 grid grid-cols-2">
+          <div class="gap-3 grid" :class="data.showTraffic !== false ? 'grid-cols-2' : 'grid-cols-1'">
             <div v-if="data.showTraffic !== false" class="relative min-w-0 overflow-hidden rounded-sm bg-slate-500/5 p-2">
               <div
                 v-if="hasTrafficLimit"

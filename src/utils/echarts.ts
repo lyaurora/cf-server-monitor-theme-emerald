@@ -1,11 +1,10 @@
 /**
- * ECharts 共享配置
+ * ECharts 共享配置（折线图核心）
  *
- * 统一注册所有图表组件，避免在各个组件中重复注册
+ * 地图组件在 NodeEarthMaps 中按需注册，避免首页/详情折线图拉入 Geo/Map 代码。
  */
-import { LineChart, MapChart, ScatterChart } from 'echarts/charts'
+import { LineChart } from 'echarts/charts'
 import {
-  GeoComponent,
   GridComponent,
   LegendComponent,
   MarkLineComponent,
@@ -15,13 +14,9 @@ import { use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
 import VChart from 'vue-echarts'
 
-// 一次性注册所有需要的 ECharts 组件
 use([
   LineChart,
-  MapChart,
-  ScatterChart,
   GridComponent,
-  GeoComponent,
   TooltipComponent,
   LegendComponent,
   MarkLineComponent,

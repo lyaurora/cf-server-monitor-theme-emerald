@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Icon } from '@iconify/vue'
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useAppStore } from '@/stores/app'
 import { getApiAssetUrl } from '@/utils/api'
 
@@ -25,16 +25,18 @@ interface VisitorInfoRow {
 }
 
 const ANDROID_REGEX = /android/i
+const MOBILE_REGEX = /mobile/i
 const IPHONE_OR_IPOD_REGEX = /iphone|ipod/i
 const IPAD_REGEX = /ipad/i
 const TABLET_REGEX = /tablet/i
-const EDGE_VERSION_REGEX = /Edg\/(\d+)/i
-const OPERA_VERSION_REGEX = /OPR\/(\d+)/i
-const CHROME_VERSION_REGEX = /Chrome\/(\d+)/i
-const EDGE_OR_OPERA_REGEX = /Edg|OPR/i
-const FIREFOX_VERSION_REGEX = /Firefox\/(\d+)/i
+const EDGE_VERSION_REGEX = /(?:Edg|EdgA|EdgiOS)\/(\d+)/i
+const OPERA_VERSION_REGEX = /(?:OPR|OPiOS)\/(\d+)/i
+const CHROME_VERSION_REGEX = /(?:Chrome|CriOS)\/(\d+)/i
+const EDGE_OR_OPERA_REGEX = /Edg|OPR|OPiOS/i
+const FIREFOX_VERSION_REGEX = /(?:Firefox|FxiOS)\/(\d+)/i
 const SAFARI_REGEX = /Safari/i
-const CHROME_REGEX = /Chrome/i
+const CHROME_OR_IOS_THIRD_PARTY_REGEX = /Chrome|CriOS|FxiOS|EdgiOS|OPiOS/i
+const ISO_COUNTRY_CODE_REGEX = /^[A-Z]{2}$/i
 const IPV4_SEGMENT_REGEX = /^\d+$/
 const IPV6_SEGMENT_REGEX = /^[\dA-F]{1,4}$/i
 const IPV6_DOUBLE_COLON = '::'
@@ -163,18 +165,24 @@ function isValidIpv6Segment(segment: string, index: number, segments: string[]):
   return IPV6_SEGMENT_REGEX.test(segment)
 }
 
+function normalizeCountryCode(value: string | undefined): string {
+  const code = value?.trim().toUpperCase() ?? ''
+  return ISO_COUNTRY_CODE_REGEX.test(code) ? code : ''
+}
+
 function detectClient(): VisitorClientData {
   const ua = navigator.userAgent
+  const isIpadDesktopUa = navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1
 
   let detectedDevice = '桌面设备'
-  if (ANDROID_REGEX.test(ua))
-    detectedDevice = 'Android 手机'
+  if (IPAD_REGEX.test(ua) || isIpadDesktopUa)
+    detectedDevice = 'iPad'
   else if (IPHONE_OR_IPOD_REGEX.test(ua))
     detectedDevice = 'iPhone'
-  else if (IPAD_REGEX.test(ua))
-    detectedDevice = 'iPad'
-  else if (TABLET_REGEX.test(ua))
+  else if (TABLET_REGEX.test(ua) || (ANDROID_REGEX.test(ua) && !MOBILE_REGEX.test(ua)))
     detectedDevice = '平板电脑'
+  else if (ANDROID_REGEX.test(ua))
+    detectedDevice = 'Android 手机'
 
   let detectedBrowser = '未知浏览器'
   const edgeMatch = ua.match(EDGE_VERSION_REGEX)
@@ -194,7 +202,7 @@ function detectClient(): VisitorClientData {
   else if (firefoxMatch) {
     detectedBrowser = 'Firefox'
   }
-  else if (SAFARI_REGEX.test(ua) && !CHROME_REGEX.test(ua)) {
+  else if (SAFARI_REGEX.test(ua) && !CHROME_OR_IOS_THIRD_PARTY_REGEX.test(ua)) {
     detectedBrowser = 'Safari'
   }
 
@@ -204,8 +212,13 @@ function detectClient(): VisitorClientData {
   }
 }
 
-async function fetchJson<T>(url: string, timeoutMs: number): Promise<T> {
+async function fetchJson<T>(url: string, timeoutMs: number, parentSignal: AbortSignal): Promise<T> {
   const controller = new AbortController()
+  const onParentAbort = () => controller.abort()
+  if (parentSignal.aborted)
+    controller.abort()
+  else
+    parentSignal.addEventListener('abort', onParentAbort, { once: true })
   const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs)
 
   try {
@@ -217,12 +230,13 @@ async function fetchJson<T>(url: string, timeoutMs: number): Promise<T> {
   }
   finally {
     window.clearTimeout(timeoutId)
+    parentSignal.removeEventListener('abort', onParentAbort)
   }
 }
 
-async function fetchVisitorGeo(): Promise<VisitorGeoData | null> {
+async function fetchVisitorGeo(signal: AbortSignal): Promise<VisitorGeoData | null> {
   const loaders = [
-    async (): Promise<VisitorGeoData> => {
+    async (runSignal: AbortSignal): Promise<VisitorGeoData> => {
       const data = await fetchJson<{
         ip?: string
         isp?: string
@@ -232,7 +246,7 @@ async function fetchVisitorGeo(): Promise<VisitorGeoData | null> {
         country_code?: string
         region?: string
         city?: string
-      }>('https://api.ip.sb/geoip', 4000)
+      }>('https://api.ip.sb/geoip', 3500, runSignal)
 
       if (!data.ip) {
         throw new Error('ip.sb unavailable')
@@ -242,10 +256,10 @@ async function fetchVisitorGeo(): Promise<VisitorGeoData | null> {
         ip: data.ip,
         isp: data.isp || data.organization || data.asn_organization || '未知运营商',
         location: [data.country, data.city || data.region].filter(Boolean).join(' · ') || '未知位置',
-        countryCode: data.country_code || '',
+        countryCode: normalizeCountryCode(data.country_code),
       }
     },
-    async (): Promise<VisitorGeoData> => {
+    async (runSignal: AbortSignal): Promise<VisitorGeoData> => {
       const data = await fetchJson<{
         success?: boolean
         message?: string
@@ -258,7 +272,7 @@ async function fetchVisitorGeo(): Promise<VisitorGeoData | null> {
           isp?: string
           org?: string
         }
-      }>('https://ipwho.is/', 4000)
+      }>('https://ipwho.is/', 3500, runSignal)
 
       if (data.success === false || !data.ip) {
         throw new Error(data.message || 'ipwho.is unavailable')
@@ -268,10 +282,10 @@ async function fetchVisitorGeo(): Promise<VisitorGeoData | null> {
         ip: data.ip,
         isp: data.connection?.isp || data.connection?.org || '未知运营商',
         location: [data.country, data.city || data.region].filter(Boolean).join(' · ') || '未知位置',
-        countryCode: data.country_code || '',
+        countryCode: normalizeCountryCode(data.country_code),
       }
     },
-    async (): Promise<VisitorGeoData> => {
+    async (runSignal: AbortSignal): Promise<VisitorGeoData> => {
       const data = await fetchJson<{
         ip?: string
         company?: {
@@ -294,7 +308,7 @@ async function fetchVisitorGeo(): Promise<VisitorGeoData | null> {
           state?: string
           city?: string
         }
-      }>('https://api.ipapi.is/', 4000)
+      }>('https://api.ipapi.is/', 3500, runSignal)
 
       if (!data.ip) {
         throw new Error('ipapi.is unavailable')
@@ -307,10 +321,10 @@ async function fetchVisitorGeo(): Promise<VisitorGeoData | null> {
           data.location?.country || data.datacenter?.country,
           data.location?.city || data.location?.state || data.datacenter?.city || data.datacenter?.region,
         ].filter(Boolean).join(' · ') || '未知位置',
-        countryCode: data.location?.country_code || data.asn?.country || data.datacenter?.country || '',
+        countryCode: normalizeCountryCode(data.location?.country_code) || normalizeCountryCode(data.asn?.country),
       }
     },
-    async (): Promise<VisitorGeoData> => {
+    async (runSignal: AbortSignal): Promise<VisitorGeoData> => {
       const data = await fetchJson<{
         error?: boolean
         reason?: string
@@ -320,7 +334,7 @@ async function fetchVisitorGeo(): Promise<VisitorGeoData | null> {
         country_code?: string
         region?: string
         city?: string
-      }>('https://ipapi.co/json/', 4000)
+      }>('https://ipapi.co/json/', 3500, runSignal)
 
       if (data.error || !data.ip) {
         throw new Error(data.reason || 'ipapi unavailable')
@@ -330,10 +344,10 @@ async function fetchVisitorGeo(): Promise<VisitorGeoData | null> {
         ip: data.ip,
         isp: data.org || '未知运营商',
         location: [data.country_name, data.city || data.region].filter(Boolean).join(' · ') || '未知位置',
-        countryCode: data.country_code || '',
+        countryCode: normalizeCountryCode(data.country_code),
       }
     },
-    async (): Promise<VisitorGeoData> => {
+    async (runSignal: AbortSignal): Promise<VisitorGeoData> => {
       const data = await fetchJson<{
         code: number
         data?: {
@@ -344,7 +358,7 @@ async function fetchVisitorGeo(): Promise<VisitorGeoData | null> {
           city?: string
           countryCode?: string
         }
-      }>('https://api.vore.top/api/IPdata', 5000)
+      }>('https://api.vore.top/api/IPdata', 4000, runSignal)
 
       if (data.code !== 0 || !data.data?.ip) {
         throw new Error('vore unavailable')
@@ -354,25 +368,79 @@ async function fetchVisitorGeo(): Promise<VisitorGeoData | null> {
         ip: data.data.ip,
         isp: data.data.isp || '未知运营商',
         location: [data.data.country, data.data.city || data.data.province].filter(Boolean).join(' · ') || '未知位置',
-        countryCode: data.data.countryCode || '',
+        countryCode: normalizeCountryCode(data.data.countryCode),
       }
     },
   ]
 
-  for (const load of loaders) {
-    try {
-      return await load()
-    }
-    catch {
-    }
-  }
+  // 先试主源；若 1.2s 内无响应或失败，再并发竞速其余备用源并及时中止多余请求。
+  const raceController = new AbortController()
+  const onParentAbort = () => raceController.abort()
+  if (signal.aborted)
+    raceController.abort()
+  else
+    signal.addEventListener('abort', onParentAbort, { once: true })
 
-  return null
+  try {
+    const primary = loaders[0]!(raceController.signal)
+    const fallbackPromise = new Promise<VisitorGeoData>((resolve, reject) => {
+      let started = false
+      let timer: number | undefined
+      const startFallbacks = () => {
+        if (started)
+          return
+        started = true
+        if (raceController.signal.aborted) {
+          reject(new Error('Aborted'))
+          return
+        }
+        void Promise.any(loaders.slice(1).map(load => load(raceController.signal)))
+          .then(resolve, reject)
+      }
+      const onRaceAbort = () => {
+        window.clearTimeout(timer)
+        if (!started) {
+          started = true
+          reject(new Error('Aborted'))
+        }
+      }
+      if (raceController.signal.aborted) {
+        onRaceAbort()
+        return
+      }
+      raceController.signal.addEventListener('abort', onRaceAbort, { once: true })
+      timer = window.setTimeout(startFallbacks, 1200)
+      primary.then(
+        () => window.clearTimeout(timer),
+        () => {
+          window.clearTimeout(timer)
+          startFallbacks()
+        },
+      )
+    })
+
+    const result = await Promise.any([primary, fallbackPromise])
+    raceController.abort()
+    return result
+  }
+  catch {
+    return null
+  }
+  finally {
+    raceController.abort()
+    signal.removeEventListener('abort', onParentAbort)
+  }
 }
 
 function handleFlagError(): void {
   flagVisible.value = false
 }
+
+const geoAbortController = new AbortController()
+
+onBeforeUnmount(() => {
+  geoAbortController.abort()
+})
 
 onMounted(async () => {
   const client = detectClient()
@@ -380,13 +448,15 @@ onMounted(async () => {
   browser.value = client.browser
   visitTime.value = formatVisitTime(new Date())
 
-  const geo = await fetchVisitorGeo()
+  const geo = await fetchVisitorGeo(geoAbortController.signal)
+  if (geoAbortController.signal.aborted)
+    return
   if (geo) {
     ip.value = geo.ip
     isp.value = geo.isp
     location.value = geo.location
-    countryCode.value = geo.countryCode.toUpperCase()
-    appStore.visitorCountryCode = geo.countryCode.toUpperCase()
+    countryCode.value = geo.countryCode
+    appStore.visitorCountryCode = geo.countryCode || null
   }
   else {
     ip.value = '暂无法获取'
@@ -401,13 +471,19 @@ onMounted(async () => {
 <template>
   <div class="pointer-events-none fixed inset-x-0 bottom-2.5 z-30 flex justify-center">
     <div
-      class="pointer-events-auto cursor-default p-1.5 px-3 shadow-[-1px_-1px_0_background,0_0_16px_rgba(0,0,0,0.05)] transition-[border-radius,transform,background-color,box-shadow] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] bg-background/30 backdrop-blur-sm"
+      role="button"
+      tabindex="0"
+      :aria-expanded="expand"
+      aria-label="展开或收起访客信息"
+      class="pointer-events-auto cursor-pointer p-1.5 px-3 shadow-[-1px_-1px_0_var(--background),0_0_16px_rgba(0,0,0,0.05)] transition-[border-radius,transform,background-color,box-shadow] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] bg-background/30 backdrop-blur-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       :class="[
         expand
-          ? 'rounded-lg -translate-y-1 bg-background/38 shadow-[-1px_-1px_0_background,0_10px_28px_rgba(0,0,0,0.08)]'
+          ? 'rounded-lg -translate-y-1 bg-background/38 shadow-[-1px_-1px_0_var(--background),0_10px_28px_rgba(0,0,0,0.08)]'
           : 'rounded-xl',
       ]"
       @click="expand = !expand"
+      @keydown.enter.prevent="expand = !expand"
+      @keydown.space.prevent="expand = !expand"
     >
       <TransitionGroup
         tag="div"

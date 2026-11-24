@@ -83,11 +83,25 @@ export default defineConfig(({ mode }) => {
       chunkSizeWarningLimit: 700,
       rollupOptions: {
         output: {
-          manualChunks: {
-            'vue-vendor': ['vue', 'vue-router', 'pinia'],
-            'echarts': ['echarts', 'vue-echarts'],
-            'reka-ui': ['reka-ui'],
-            'vueuse': ['@vueuse/core'],
+          manualChunks(id) {
+            if (!id.includes('node_modules'))
+              return undefined
+            if (id.includes('/node_modules/echarts/')
+              || id.includes('/node_modules/zrender/')
+              || id.includes('/node_modules/vue-echarts/')) {
+              return 'echarts'
+            }
+            if (id.includes('/node_modules/reka-ui/'))
+              return 'reka-ui'
+            if (id.includes('/node_modules/@vueuse/'))
+              return 'vueuse'
+            if (id.includes('/node_modules/vue/')
+              || id.includes('/node_modules/@vue/')
+              || id.includes('/node_modules/vue-router/')
+              || id.includes('/node_modules/pinia/')) {
+              return 'vue-vendor'
+            }
+            return undefined
           },
         },
       },

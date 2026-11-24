@@ -11,19 +11,6 @@ export interface RecordFormat {
   time: string
   cpu: number | null
   gpu: number | null
-  gpu_usage: number | null
-  gpu_memory: number | null
-  gpu_detailed?: {
-    [index: number]: {
-      usage: number | null
-      memory: number | null
-      temperature: number | null
-      device_index?: number
-      device_name?: string
-      mem_total?: number
-      mem_used?: number
-    }
-  }
   ram: number | null
   ram_total: number | null
   swap: number | null

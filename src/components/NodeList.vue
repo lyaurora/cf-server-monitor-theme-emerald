@@ -1,21 +1,13 @@
 <script setup lang="ts">
 import type { NodeData } from '@/stores/nodes'
-import { Icon } from '@iconify/vue'
 import { computed, ref } from 'vue'
-import { RouterLink } from 'vue-router'
-import NodePingListCell from '@/components/NodePingListCell.vue'
-import { Badge } from '@/components/ui/badge'
-import { DataTooltip } from '@/components/ui/data-tooltip'
-import { ProgressThin } from '@/components/ui/progress-thin'
+import NodeListRow from '@/components/NodeListRow.vue'
 import { useBackgroundSurface } from '@/composables/useBackgroundSurface'
 import { useNodeListTransition } from '@/composables/useNodeListTransition'
 import { useAppStore } from '@/stores/app'
 import { useNodesStore } from '@/stores/nodes'
-import { getApiAssetUrl } from '@/utils/api'
-import { formatBytesPerSecondWithConfig, formatBytesWithConfig, formatUptimeWithFormat, getStatus } from '@/utils/helper'
-import { formatOfflineTime, getCustomTags, getPriceTags, getRemainingTimeTagClass, getTrafficLevel, getTrafficUsed, getTrafficUsedPercentage, hasRegion, showTrafficProgress } from '@/utils/nodeHelper'
-import { getOSImage, getOSName } from '@/utils/osImageHelper'
-import { getRegionCode, getRegionDisplayName } from '@/utils/regionHelper'
+import { getTrafficUsedPercentage } from '@/utils/nodeHelper'
+import { getOSName } from '@/utils/osImageHelper'
 
 interface ColumnConfig {
   key: string
@@ -58,7 +50,13 @@ const columns: ColumnConfig[] = [
 const sortKey = ref<string>('')
 const sortDir = ref<1 | -1>(1)
 const nameCollator = new Intl.Collator('zh-CN', { numeric: true, sensitivity: 'base' })
-const visibleColumns = computed(() => columns.filter(col => col.key !== 'traffic' || props.nodes.some(node => node.showTraffic !== false)))
+const visibleColumns = computed(() => columns.filter((col) => {
+  if (col.key === 'traffic')
+    return props.nodes.some(node => node.showTraffic !== false)
+  if (col.key === 'latency')
+    return nodesStore.showThreeNetDetails
+  return true
+}))
 const offlineOverlayColumnStart = computed(() => visibleColumns.value.findIndex(col => col.key === 'name') + 1)
 
 function getInitialSortDir(col: ColumnConfig): 1 | -1 {
@@ -114,17 +112,9 @@ const sortedNodes = computed(() => {
   })
 })
 
-const formatBytes = (bytes: number) => formatBytesWithConfig(bytes, appStore.byteDecimals)
-const formatBytesPerSecond = (bytes: number) => formatBytesPerSecondWithConfig(bytes, appStore.byteDecimals)
-const formatUptime = (seconds: number) => formatUptimeWithFormat(seconds, 'hour')
-
 const gridStyle = computed(() => ({
   gridTemplateColumns: visibleColumns.value.map(c => c.width).join(' '),
 }))
-
-function getFlagSrc(region: string): string {
-  return getApiAssetUrl(`flags/${getRegionCode(region).toLowerCase()}.svg`)
-}
 
 function handleClick(node: NodeData) {
   emit('click', node)
@@ -184,214 +174,17 @@ function getRowTransitionStyle(index: number): Record<string, string> {
         @after-leave="afterLeave"
         @leave-cancelled="afterLeave"
       >
-        <div
+        <NodeListRow
           v-for="(node, index) in sortedNodes"
           :key="getRowTransitionKey(node)"
-          class="relative flex h-16 cursor-pointer flex-col justify-center rounded-lg px-2 shadow-[0_0_4px,0_0_0_1px] shadow-transparent transition-all bg-background/60 hover:bg-background hover:shadow-emerald-600/10"
-          :class="[pickSurfaceClass('', 'backdrop-blur-sm'), !node.online && '!shadow-red-600/10']"
+          :node="node"
+          :visible-columns="visibleColumns"
+          :grid-style="gridStyle"
+          :offline-overlay-column-start="offlineOverlayColumnStart"
           :style="getRowTransitionStyle(index)"
-          @click="handleClick(node)"
-        >
-          <div class="grid gap-2 items-center" :style="gridStyle" :aria-hidden="node.online ? undefined : 'true'" :inert="!node.online || undefined">
-            <template v-for="col in visibleColumns" :key="col.key">
-              <!-- 在线状态指示器 -->
-              <div v-if="col.key === 'status'" class="flex justify-center">
-                <div class="size-2 rounded-full relative" :class="[node.online ? 'bg-emerald-600' : 'bg-red-600']">
-                  <div
-                    class="animate-ping absolute inset-0 rounded-full opacity-50"
-                    :class="[node.online ? 'bg-emerald-600' : 'bg-red-600']"
-                  />
-                </div>
-              </div>
-
-              <!-- 节点名称 -->
-              <div v-else-if="col.key === 'name'" class="space-y-0.5" :class="[!node.online && 'blur-sm opacity-30']">
-                <div class="flex gap-1 items-center text-xs font-semibold">
-                  <img
-                    v-if="hasRegion(node.region)" :src="getFlagSrc(node.region)"
-                    :alt="getRegionDisplayName(node.region)" class="size-5 rounded-sm drop-shadow-[0_0_2px_rgba(0,0,0,0.1)]"
-                  >
-                  <RouterLink
-                    v-if="node.online"
-                    :to="{ name: 'instance-detail', params: { id: node.uuid } }"
-                    class="truncate rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                    :aria-label="`${node.name}，在线，查看详情`" @click.stop
-                  >
-                    {{ node.name }}
-                  </RouterLink>
-                  <span v-else class="truncate">{{ node.name }}</span>
-                </div>
-                <div v-if="node.uptime" class="text-[11px] text-muted-foreground/70 truncate">
-                  {{ formatUptime(node.uptime ?? 0) }}
-                  <span v-for="(tag, tagIndex) in getPriceTags(node, appStore.lang, nodesStore.pingNow.getTime())" :key="tagIndex" class="ml-1">
-                    <template v-if="tag.highlightValue">
-                      <span :class="getRemainingTimeTagClass(node, nodesStore.pingNow.getTime())">{{ tag.highlightValue }}</span>
-                    </template>
-                    <template v-else>
-                      {{ tag.text }}
-                    </template>
-                  </span>
-                </div>
-              </div>
-
-              <!-- 标签 -->
-              <div v-else-if="col.key === 'tags'">
-                <div class="flex flex-wrap gap-1 items-center">
-                  <Badge
-                    v-for="(tag, tagIndex) in getCustomTags(node)" :key="tagIndex" variant="outline"
-                    class="!text-[11px] rounded text-muted-foreground border-muted-foreground/10 px-1.5"
-                  >
-                    {{ tag }}
-                  </Badge>
-                </div>
-              </div>
-
-              <!-- 与卡片选线一致的最新延迟 -->
-              <div v-else-if="col.key === 'latency'" class="flex items-center">
-                <NodePingListCell
-                  :node="node"
-                  role="button"
-                  tabindex="0"
-                  class="rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  :aria-label="`${node.name} 延迟`"
-                  @click.stop="openPingDialog(node)"
-                  @keydown.enter.stop.prevent="openPingDialog(node)"
-                  @keydown.space.stop.prevent="openPingDialog(node)"
-                />
-              </div>
-
-              <!-- 操作系统 -->
-              <div v-else-if="col.key === 'os'" class="flex justify-center">
-                <img :src="getOSImage(node.os)" :alt="getOSName(node.os)" class="size-4">
-              </div>
-
-              <!-- CPU -->
-              <div v-else-if="col.key === 'cpu'" class="group">
-                <div class="space-y-1">
-                  <div class="text-[10px] text-muted-foreground truncate">
-                    <span class="inline group-hover:hidden">
-                      {{ (node.cpu ?? 0).toFixed(1) }}%
-                    </span>
-                    <span class="hidden group-hover:inline">
-                      {{ node.load.toFixed(2) ?? 0 }}, {{ node.load5.toFixed(2) ?? 0 }}, {{ node.load15.toFixed(2) ?? 0
-                      }}
-                    </span>
-                  </div>
-                  <ProgressThin :percentage="node.cpu ?? 0" :status="getStatus(node.cpu ?? 0)" :height="4" />
-                </div>
-              </div>
-
-              <!-- 内存 -->
-              <div v-else-if="col.key === 'mem'" class="group">
-                <DataTooltip placement="top" class="block" :content-class="[!node.swap && '!hidden']">
-                  <div class="space-y-1">
-                    <div class="text-[10px] text-muted-foreground truncate">
-                      <span class="inline group-hover:hidden">
-                        {{ ((node.ram ?? 0) / (node.mem_total || 1) * 100).toFixed(1) }}%
-                      </span>
-                      <span class="hidden group-hover:inline">
-                        {{ formatBytes(node.ram ?? 0) }} / {{ formatBytes(node.mem_total ?? 0) }}
-                      </span>
-                    </div>
-                    <ProgressThin
-                      :percentage="(node.ram ?? 0) / (node.mem_total || 1) * 100"
-                      :status="getStatus((node.ram ?? 0) / (node.mem_total || 1) * 100)" :height="4"
-                    />
-                  </div>
-                  <template #content>
-                    <div class="flex items-center justify-between gap-3 whitespace-nowrap">
-                      <span class="text-background/70">Swap</span>
-                      <span>{{ formatBytes(node.swap ?? 0) }}</span>
-                    </div>
-                  </template>
-                </DataTooltip>
-              </div>
-
-              <!-- 硬盘 -->
-              <div v-else-if="col.key === 'disk'" class="group">
-                <div class="space-y-1">
-                  <div class="text-[10px] text-muted-foreground truncate">
-                    <span class="inline group-hover:hidden">
-                      {{ ((node.disk ?? 0) / (node.disk_total || 1) * 100).toFixed(1) }}%
-                    </span>
-                    <span class="hidden group-hover:inline">
-                      {{ formatBytes(node.disk ?? 0) }} / {{ formatBytes(node.disk_total ?? 0) }}
-                    </span>
-                  </div>
-                  <ProgressThin
-                    :percentage="(node.disk ?? 0) / (node.disk_total || 1) * 100"
-                    :status="getStatus((node.disk ?? 0) / (node.disk_total || 1) * 100)" :height="4"
-                  />
-                </div>
-              </div>
-
-              <!-- 流量 -->
-              <div v-else-if="col.key === 'traffic'" class="group">
-                <DataTooltip v-if="node.showTraffic !== false" placement="top" class="flex items-center gap-2" content-class="mb-1.5">
-                  <div class="space-y-1 w-full">
-                    <div class="text-[10px] text-muted-foreground truncate">
-                      <span class="inline group-hover:hidden">
-                        {{ getTrafficUsedPercentage(node).toFixed(1) }}%
-                      </span>
-                      <span class="hidden group-hover:inline">
-                        {{ formatBytes(getTrafficUsed(node)) }} /
-                        <template v-if="showTrafficProgress(node)">{{ formatBytes(node.traffic_limit) }}</template>
-                        <template v-else>∞</template>
-                      </span>
-                    </div>
-                    <ProgressThin
-                      :percentage="getTrafficUsedPercentage(node)"
-                      :status="getTrafficLevel(getTrafficUsedPercentage(node))" :height="4"
-                    />
-                  </div>
-                  <template #content>
-                    <span class="flex flex-row gap-0.5 items-center whitespace-nowrap">
-                      <Icon icon="tabler:chevron-up" width="12" height="12" />
-                      {{ formatBytes(node.net_monthly_up ?? 0) }}
-                    </span>
-                    <span class="flex flex-row gap-0.5 items-center whitespace-nowrap">
-                      <Icon icon="tabler:chevron-down" width="12" height="12" />
-                      {{ formatBytes(node.net_monthly_down ?? 0) }}
-                    </span>
-                  </template>
-                </DataTooltip>
-              </div>
-
-              <!-- 速率 -->
-              <div v-else-if="col.key === 'rate'">
-                <div class="text-[10px] flex flex-col ">
-                  <span class="text-emerald-600 flex flex-row gap-1 items-center">
-                    <Icon icon="tabler:chevron-up" width="12" height="12" />
-                    {{ formatBytesPerSecond(node.net_out ?? 0) }}
-                  </span>
-                  <span class="text-blue-600 flex flex-row gap-1 items-center">
-                    <Icon icon="tabler:chevron-down" width="12" height="12" />
-                    {{ formatBytesPerSecond(node.net_in ?? 0) }}
-                  </span>
-                </div>
-              </div>
-            </template>
-          </div>
-
-          <div
-            v-if="!node.online" class="absolute inset-0 z-2 p-2 bg-background/10 rounded-lg flex items-center"
-          >
-            <div class="grid gap-2 items-center justify-center" :style="gridStyle">
-              <div class="h-full space-y-1" :style="{ gridColumn: `${offlineOverlayColumnStart} / -1` }">
-                <RouterLink
-                  :to="{ name: 'instance-detail', params: { id: node.uuid } }"
-                  class="block truncate rounded-sm text-sm font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  :aria-label="`${node.name}，离线，查看详情`" @click.stop
-                >
-                  <span class="text-red-500">离线</span> {{ node.name }}
-                </RouterLink>
-                <div class="text-xs text-muted-foreground">
-                  {{ formatOfflineTime(node) }}
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
+          @click="handleClick"
+          @ping-click="openPingDialog"
+        />
       </TransitionGroup>
     </div>
   </div>
@@ -427,10 +220,6 @@ function getRowTransitionStyle(index: number): Record<string, string> {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .animate-ping {
-    animation: none;
-  }
-
   .node-row-switch-enter-active,
   .node-row-switch-leave-active,
   .node-row-switch-move {

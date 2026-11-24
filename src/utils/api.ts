@@ -1,6 +1,6 @@
 import type { CurrencyCode } from '@/utils/financeHelper'
 import type { Client, NodeStatus, NodeStatusPing, PingRecord, PingWindowPoint, StatusRecord, TrafficLimitType } from '@/utils/rpc'
-import { isSupportedCurrency, normalizedCurrencyMap } from '@/utils/financeHelper'
+import { isSupportedCurrency, normalizedCurrencyMap, SUPPORTED_FINANCE_CURRENCIES } from '@/utils/financeHelper'
 import { requestTurnstileToken } from '@/utils/turnstile'
 
 const ONLINE_THRESHOLD_MS = 5 * 60 * 1000
@@ -555,21 +555,38 @@ function authHeaders(initialHeaders?: HeadersInit): Headers {
   return headers
 }
 
-function clearTurnstileSession(): void {
+function setLocalStorageValue(key: string, value: string): void {
+  if (typeof localStorage === 'undefined')
+    return
   try {
-    const host = window.location.hostname
-    localStorage.removeItem(`turnstile_verified_${host}`)
-    localStorage.removeItem('turnstile_verified')
-    localStorage.removeItem('turnstile_token')
+    localStorage.setItem(key, value)
   }
   catch {}
 }
 
+function removeLocalStorageValue(key: string): void {
+  if (typeof localStorage === 'undefined')
+    return
+  try {
+    localStorage.removeItem(key)
+  }
+  catch {}
+}
+
+function clearTurnstileSession(): void {
+  const host = typeof window === 'undefined' ? '' : window.location.hostname
+  if (host)
+    removeLocalStorageValue(`turnstile_verified_${host}`)
+  removeLocalStorageValue('turnstile_verified')
+  removeLocalStorageValue('turnstile_token')
+}
+
 function storeTurnstileVerified(verified: string): void {
-  const host = window.location.hostname
-  localStorage.setItem(`turnstile_verified_${host}`, verified)
-  localStorage.setItem('turnstile_verified', verified)
-  localStorage.removeItem('turnstile_token')
+  const host = typeof window === 'undefined' ? '' : window.location.hostname
+  if (host)
+    setLocalStorageValue(`turnstile_verified_${host}`, verified)
+  setLocalStorageValue('turnstile_verified', verified)
+  removeLocalStorageValue('turnstile_token')
 }
 
 /** 并发 403 共享同一次重新验证，避免一次性 token 被重复消费。 */
@@ -580,6 +597,8 @@ async function resolveTurnstileSiteKey(): Promise<string | null> {
   const cached = cachedSiteConfig
   if (cached && enabled(cached.turnstile_enabled) && cached.turnstile_site_key)
     return cached.turnstile_site_key
+  if (cached && !enabled(cached.turnstile_enabled))
+    return null
 
   // Cold start：本地 verified 已过期被清掉后，裸请求拿 site key（不带 Turnstile 头）
   try {
@@ -587,9 +606,10 @@ async function resolveTurnstileSiteKey(): Promise<string | null> {
     if (!response.ok)
       return null
     const data = await response.json() as SiteConfig
+    cachedSiteConfig = data
+    applyCustomPingNames(data)
     if (!enabled(data.turnstile_enabled) || !data.turnstile_site_key)
       return null
-    cachedSiteConfig = data
     return data.turnstile_site_key
   }
   catch {
@@ -613,9 +633,16 @@ export async function refreshTurnstileSession(): Promise<boolean> {
     let token = ''
     try {
       token = await requestTurnstileToken(siteKey)
-      localStorage.setItem('turnstile_token', token)
+      setLocalStorageValue('turnstile_token', token)
       // allowRetry=false：换票本身失败时不再嵌套弹窗
-      await request('/api/config', {}, false)
+      const config = await request<SiteConfig>('/api/config', {}, false)
+      if (!config?.verified && !config?.turnstile_verified) {
+        if (getLocalStorageValue('turnstile_token') === token)
+          clearTurnstileSession()
+        return false
+      }
+      cachedSiteConfig = config
+      applyCustomPingNames(config)
       return true
     }
     catch {
@@ -628,6 +655,19 @@ export async function refreshTurnstileSession(): Promise<boolean> {
   })
 
   return turnstileRefreshPromise
+}
+
+function isTurnstileManaged403(path: string, data: unknown): boolean {
+  if (cachedSiteConfig && !enabled(cachedSiteConfig.turnstile_enabled))
+    return false
+  // 管理员接口返回 403 且不包含 Turnstile 标记时通常是权限/登录失效，不清除 Turnstile 会话。
+  if (path === '/api/theme_options') {
+    const message = data && typeof data === 'object' && 'error' in data
+      ? String((data as { error: unknown }).error).toLowerCase()
+      : ''
+    return message.includes('turnstile')
+  }
+  return true
 }
 
 async function request<T>(
@@ -657,7 +697,7 @@ async function request<T>(
     const message = data && typeof data === 'object' && 'error' in data
       ? String((data as { error: unknown }).error)
       : `HTTP ${response.status}`
-    if (response.status === 403) {
+    if (response.status === 403 && isTurnstileManaged403(path, data)) {
       // Wait for the in-flight exchange; its token must only be consumed once.
       if (allowTurnstileRetry && turnstileRefreshPromise) {
         if (await turnstileRefreshPromise)
@@ -706,9 +746,14 @@ export async function saveNodePingLines(uuid: string, lines: string[]): Promise<
   if (!config.authorization)
     throw new Error('请先登录站长账号')
   const existing = isRecord(config.theme_options) ? config.theme_options : {}
-  const recentEdits = Object.fromEntries([...savedPingLineEdits]
-    .filter(([, edit]) => Date.now() - edit.time < 150_000)
-    .map(([key, edit]) => [key, edit.lines]))
+  const now = Date.now()
+  for (const [key, edit] of savedPingLineEdits) {
+    if (now - edit.time >= 150_000)
+      savedPingLineEdits.delete(key)
+  }
+  const recentEdits = Object.fromEntries(
+    Array.from(savedPingLineEdits, ([key, edit]) => [key, edit.lines]),
+  )
   const pingLinesByNode = { ...adaptThemeOptions(existing).pingLinesByNode, ...recentEdits, [uuid]: lines }
   const themeOptions = { ...existing, pingLinesByNode }
   const result = await request<{ success: boolean, message?: string }>('/api/theme_options', {
@@ -827,31 +872,67 @@ function normalizeCurrencyField(value: unknown): string | null {
 }
 
 const ISO_CURRENCY_CODE_REGEX = /^[A-Z]{3}$/i
+const PURE_ASCII_LETTERS_REGEX = /^[A-Z]+$/i
+const REGEX_META_CHARS = /[.*+?^${}()|[\]\\]/g
 
-/** symbol → ISO code（排除 ISO 代码键，按长度降序匹配） */
-const REVERSE_SYMBOL_MAP: Record<string, CurrencyCode> = Object.fromEntries(
-  Object.entries(normalizedCurrencyMap)
-    .filter(([k]) => !ISO_CURRENCY_CODE_REGEX.test(k))
-    .map(([symbol, code]) => [symbol, code]),
-)
-const SORTED_SYMBOL_KEYS = Object.keys(REVERSE_SYMBOL_MAP).sort((a, b) => b.length - a.length)
+function escapeRegexChars(value: string): string {
+  return value.replace(REGEX_META_CHARS, '\\$&')
+}
+
+/** 非纯英文字母的货币符号（含 $ / ¥ / € / HK$ / ¥JPY 等），按长度降序优先匹配 */
+const NON_LETTER_SYMBOLS = Object.entries(normalizedCurrencyMap)
+  .filter(([key]) => !PURE_ASCII_LETTERS_REGEX.test(key))
+  .sort(([a], [b]) => b.length - a.length)
+
+/** 全部支持的 3 字母 ISO 货币代码 + RMB，按词边界匹配，避免被单字母符号截胡 */
+const LEGACY_ISO_MATCHERS: Array<{ code: CurrencyCode, regex: RegExp }> = [
+  ...SUPPORTED_FINANCE_CURRENCIES.map(code => ({
+    code,
+    regex: new RegExp(`(?:^|[^A-Z])${code}(?:$|[^A-Z])`),
+  })),
+  { code: 'CNY' as CurrencyCode, regex: /(?:^|[^A-Z])RMB(?:$|[^A-Z])/ },
+]
+
+/** 纯字母短符号（如 RM / Rp / Ft / kr / R / Q），仅在价格主干内按词边界匹配 */
+const LETTER_SYMBOL_MATCHERS = Object.entries(normalizedCurrencyMap)
+  .filter(([key]) => PURE_ASCII_LETTERS_REGEX.test(key) && !ISO_CURRENCY_CODE_REGEX.test(key))
+  .sort(([a], [b]) => b.length - a.length)
+  .map(([symbol, code]) => ({
+    symbol,
+    code,
+    regex: new RegExp(
+      `(?:^|[^A-Za-z])${escapeRegexChars(symbol)}(?:$|[^A-Za-z])`,
+      symbol.length > 1 ? 'i' : '',
+    ),
+  }))
 
 function detectLegacyCurrency(value: unknown): string {
-  const text = String(value ?? '')
+  const text = String(value ?? '').trim()
   if (!text)
     return 'CNY'
 
-  const upper = text.toUpperCase()
+  // 仅检查计费周期斜杠前的价格部分，避免 /Q、/YR、/Quarter 等周期后缀误触发货币符号。
+  const pricePart = text.split('/', 1)[0]?.trim() ?? ''
+  if (!pricePart)
+    return 'CNY'
 
-  // 按长度降序匹配符号，确保 "HK$" 优先于 "$"
-  for (const symbol of SORTED_SYMBOL_KEYS) {
-    if (text.includes(symbol) || (symbol.length > 1 && upper.includes(symbol.toUpperCase())))
-      return REVERSE_SYMBOL_MAP[symbol]!
+  const upper = pricePart.toUpperCase()
+
+  // 1. 优先匹配含特殊字符的明确符号，确保 "HK$"、"¥JPY" 优先于 "$"、"¥"
+  for (const [symbol, code] of NON_LETTER_SYMBOLS) {
+    if (pricePart.includes(symbol) || (symbol.length > 1 && upper.includes(symbol.toUpperCase())))
+      return code
   }
 
-  // 尝试 ISO 代码匹配
-  for (const [key, code] of Object.entries(normalizedCurrencyMap)) {
-    if (ISO_CURRENCY_CODE_REGEX.test(key) && upper.includes(key))
+  // 2. 匹配 3 字母 ISO 代码与 RMB（词边界）
+  for (const { code, regex } of LEGACY_ISO_MATCHERS) {
+    if (regex.test(upper))
+      return code
+  }
+
+  // 3. 最后按词边界匹配纯字母短符号（如 R100 / Q50 / RM20 / 50 kr）
+  for (const { code, regex } of LETTER_SYMBOL_MATCHERS) {
+    if (regex.test(pricePart))
       return code
   }
 
@@ -904,7 +985,7 @@ function resolveDisplayCurrency(server: Pick<CfServer, 'price' | 'currency'>): s
 function parseTrafficLimit(value: unknown): number {
   const text = String(value ?? '').trim().toUpperCase()
   const amount = finiteNumber(text)
-  if (!amount)
+  if (amount <= 0)
     return 0
   if (text.includes('PB'))
     return amount * 1024 ** 5

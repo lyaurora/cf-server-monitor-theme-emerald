@@ -40,6 +40,6 @@ onUnmounted(() => {
       </div>
     </main>
     <Footer v-if="!appStore.loading" />
-    <Toaster rich-colors close-button position="top-center" />
+    <Toaster :theme="appStore.resolvedThemeMode" rich-colors close-button position="top-center" />
   </Provider>
 </template>

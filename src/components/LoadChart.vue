@@ -9,6 +9,7 @@ import { Empty } from '@/components/ui/empty'
 import { Spinner } from '@/components/ui/spinner'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useBackgroundSurface } from '@/composables/useBackgroundSurface'
+import { formatChartTooltipTime, renderTooltipRow, useChartTheme } from '@/composables/useChartTheme'
 import { useAppStore } from '@/stores/app'
 import { useNodesStore } from '@/stores/nodes'
 import { fetchLoadHistory } from '@/utils/api'
@@ -29,8 +30,7 @@ const nodesStore = useNodesStore()
 // 从 publicSettings 获取记录保留时间
 const maxRecordPreserveTime = computed(() => appStore.publicSettings?.record_preserve_time || 720)
 
-// 使用 store 中的 isDark computed
-const isDark = computed(() => appStore.isDark)
+const { chartThemeColors, baseTooltipConfig } = useChartTheme()
 
 // 优化后的图表配色方案（基于 Material Design 色彩）
 const chartColors = {
@@ -46,48 +46,6 @@ const chartColors = {
   // 第五色 - 天蓝色
   quinary: '#60A5FA',
 }
-
-// 图表主题相关颜色
-const chartThemeColors = computed(() => ({
-  text: isDark.value ? 'rgba(255, 255, 255, 0.85)' : 'rgba(0, 0, 0, 0.85)',
-  textSecondary: isDark.value ? 'rgba(255, 255, 255, 0.55)' : 'rgba(0, 0, 0, 0.55)',
-  textTertiary: isDark.value ? 'rgba(255, 255, 255, 0.35)' : 'rgba(0, 0, 0, 0.35)',
-  borderColor: isDark.value ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
-  splitLineColor: isDark.value ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.06)',
-  tooltipBg: isDark.value ? 'rgba(40, 40, 40, 0.95)' : 'rgba(255, 255, 255, 0.8)',
-  tooltipShadow: isDark.value ? 'rgba(0, 0, 0, 0.4)' : 'rgba(0, 0, 0, 0.06)',
-  crosshairColor: isDark.value ? 'rgba(255, 255, 255, 0.15)' : 'rgba(0, 0, 0, 0.1)',
-}))
-
-// 通用 Tooltip 配置
-const baseTooltipConfig = computed(() => ({
-  trigger: 'axis' as const,
-  confine: false,
-  backgroundColor: chartThemeColors.value.tooltipBg,
-  borderColor: 'transparent',
-  borderWidth: 0,
-  borderRadius: 6,
-  textStyle: {
-    color: chartThemeColors.value.text,
-    fontSize: 12,
-    lineHeight: 20,
-  },
-  extraCssText: `${appStore.backgroundEnabled ? 'backdrop-filter: blur(5px);' : ''}z-index:9;box-shadow:0 0 0 1px ${chartThemeColors.value.tooltipShadow}, 0 0 16px ${chartThemeColors.value.tooltipShadow}`,
-  axisPointer: {
-    type: 'cross' as const,
-    crossStyle: {
-      color: chartThemeColors.value.textTertiary,
-    },
-    lineStyle: {
-      color: chartThemeColors.value.crosshairColor,
-      width: 1,
-      type: 'dashed' as const,
-    },
-    shadowStyle: {
-      color: chartThemeColors.value.crosshairColor,
-    },
-  },
-}))
 
 // 图表边距配置
 const chartMargin = { top: 30, right: 24, bottom: 32, left: 56 }
@@ -126,8 +84,6 @@ function statusToRecordFormat(records: StatusRecord[]): RecordFormat[] {
     time: r.time,
     cpu: r.cpu ?? null,
     gpu: r.gpu ?? null,
-    gpu_usage: null,
-    gpu_memory: null,
     ram: r.ram ?? null,
     ram_total: r.ram_total ?? null,
     swap: r.swap ?? null,
@@ -149,11 +105,11 @@ function statusToRecordFormat(records: StatusRecord[]): RecordFormat[] {
 // 实时视图只保留所选时间窗内的数据，避免长时间驻留后横向漂移；以最后一条数据点为锚，避免时钟偏差
 function trimToSelectedWindow(records: StatusRecord[]): StatusRecord[] {
   const windowMs = (selectedHours.value || DEFAULT_CHART_TIME_RANGE.hours) * 3600 * 1000
-  const lastMs = dayjs(records.at(-1)?.time ?? '').valueOf()
+  const lastMs = Date.parse(records.at(-1)?.time ?? '')
   if (!Number.isFinite(lastMs))
     return records
   const cutoff = lastMs - windowMs
-  return records.filter(record => dayjs(record.time).valueOf() >= cutoff)
+  return records.filter(record => Date.parse(record.time) >= cutoff)
 }
 
 function nodeToStatusRecord(node: NonNullable<typeof nodeInfo.value>): StatusRecord {
@@ -189,9 +145,9 @@ function appendRealtimeStatus(node: NonNullable<typeof nodeInfo.value>): void {
     return
 
   const next = nodeToStatusRecord(node)
-  const nextTime = dayjs(next.time).valueOf()
-  const lastTime = dayjs(remoteData.value.at(-1)?.time ?? '').valueOf()
-  if (!Number.isFinite(nextTime) || nextTime <= lastTime)
+  const nextTime = Date.parse(next.time)
+  const lastTime = Date.parse(remoteData.value.at(-1)?.time ?? '')
+  if (!Number.isFinite(nextTime) || (Number.isFinite(lastTime) && nextTime <= lastTime))
     return
 
   remoteData.value = trimToSelectedWindow([...remoteData.value, next])
@@ -216,10 +172,11 @@ async function fetchData() {
 
     const liveRecords = realtime ? remoteData.value.filter(record => !previousRecords.has(record)) : []
     // History persistence can lag behind samples already displayed before this request.
-    const records = [...new Map([...(realtime ? remoteData.value : []), ...result, ...liveRecords].map(record => [record.time, record])).values()]
-    records.sort((a, b) =>
-      dayjs(a.time).valueOf() - dayjs(b.time).valueOf(),
-    )
+    const mergedMap = new Map([...(realtime ? remoteData.value : []), ...result, ...liveRecords].map(record => [record.time, record]))
+    const records = Array.from(mergedMap.values(), record => ({ record, timeMs: Date.parse(record.time) }))
+      .filter(item => Number.isFinite(item.timeMs))
+      .sort((a, b) => a.timeMs - b.timeMs)
+      .map(item => item.record)
 
     remoteData.value = trimToSelectedWindow(records)
   }
@@ -264,6 +221,16 @@ const latestStatus = computed(() => {
   return data.at(-1) ?? null
 })
 const swapTotal = computed(() => latestStatus.value?.swap_total ?? nodeInfo.value?.swap_total)
+const latestFormatted = computed(() => ({
+  ram: latestStatus.value?.ram != null ? formatBytesSplit(latestStatus.value.ram) : null,
+  memTotal: nodeInfo.value?.mem_total ? formatBytesSplit(nodeInfo.value.mem_total) : null,
+  swap: latestStatus.value?.swap != null ? formatBytesSplit(latestStatus.value.swap) : null,
+  swapTotal: swapTotal.value != null ? formatBytesSplit(swapTotal.value) : null,
+  disk: latestStatus.value?.disk != null ? formatBytesSplit(latestStatus.value.disk) : null,
+  diskTotal: nodeInfo.value?.disk_total ? formatBytesSplit(nodeInfo.value.disk_total) : null,
+  netOut: latestStatus.value?.net_out != null ? formatBytesSplit(latestStatus.value.net_out) : null,
+  netIn: latestStatus.value?.net_in != null ? formatBytesSplit(latestStatus.value.net_in) : null,
+}))
 
 // ==================== 工具函数 ====================
 
@@ -273,14 +240,6 @@ function formatTime(time: string, showDate: boolean): string {
     return date.format('M/D HH:mm')
   }
   return date.format(isRealtime.value ? 'HH:mm:ss' : 'HH:mm')
-}
-
-function formatTimeForTooltip(time: string, hours: number): string {
-  const date = dayjs(time)
-  if (hours < 24) {
-    return date.format('HH:mm:ss')
-  }
-  return date.format('MM/DD HH:mm')
 }
 
 const showDateInAxis = computed(() => (selectedHours.value || 1) >= 24)
@@ -345,17 +304,16 @@ const cpuChartOption = computed(() => ({
       if (!record)
         return ''
 
-      const timeStr = formatTimeForTooltip(record.time, selectedHours.value || 1)
+      const timeStr = formatChartTooltipTime(record.time, selectedHours.value || 1)
       let html = `<div style="font-weight:600;margin-bottom:6px;color:${chartThemeColors.value.textSecondary}">${timeStr}</div>`
       html += '<div style="display:flex;flex-direction:column;gap:4px">'
 
       for (const item of p) {
-        const colorDot = `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${item.color};margin-right:8px;flex-shrink:0"></span>`
         if (item.seriesName === 'CPU') {
-          html += `<div style="display:flex;align-items:center">${colorDot}<span>CPU</span><span style="margin-left:auto;font-weight:600;margin-left:16px">${item.value?.toFixed(1) ?? '-'}%</span></div>`
+          html += renderTooltipRow(item.color, 'CPU', `${item.value?.toFixed(1) ?? '-'}%`)
         }
         else if (item.seriesName === '负载') {
-          html += `<div style="display:flex;align-items:center">${colorDot}<span>系统负载</span><span style="margin-left:auto;font-weight:600;margin-left:16px">${item.value?.toFixed(2) ?? '-'}</span></div>`
+          html += renderTooltipRow(item.color, '系统负载', `${item.value?.toFixed(2) ?? '-'}`)
         }
       }
       html += '</div>'
@@ -440,17 +398,16 @@ const memoryChartOption = computed(() => ({
       const ramPercent = ramTotal > 0 ? ((ramUsed / ramTotal) * 100).toFixed(1) : '0'
       const swapPercent = swapTotal == null ? '' : ` (${swapTotal > 0 ? ((swapUsed / swapTotal) * 100).toFixed(1) : '0'}%)`
 
-      const timeStr = formatTimeForTooltip(record.time, selectedHours.value || 1)
+      const timeStr = formatChartTooltipTime(record.time, selectedHours.value || 1)
       let html = `<div style="font-weight:600;margin-bottom:6px;color:${chartThemeColors.value.textSecondary}">${timeStr}</div>`
       html += '<div style="display:flex;flex-direction:column;gap:4px">'
 
       for (const item of p) {
-        const colorDot = `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${item.color};margin-right:8px;flex-shrink:0"></span>`
         if (item.seriesName === 'RAM') {
-          html += `<div style="display:flex;align-items:center">${colorDot}<span>RAM</span><span style="margin-left:auto;font-weight:600;margin-left:16px">${formatBytes(ramUsed)} (${ramPercent}%)</span></div>`
+          html += renderTooltipRow(item.color, 'RAM', `${formatBytes(ramUsed)} (${ramPercent}%)`)
         }
         else if (item.seriesName === 'Swap' && record.swap !== null) {
-          html += `<div style="display:flex;align-items:center">${colorDot}<span>Swap</span><span style="margin-left:auto;font-weight:600;margin-left:16px">${formatBytes(swapUsed)}${swapPercent}</span></div>`
+          html += renderTooltipRow(item.color, 'Swap', `${formatBytes(swapUsed)}${swapPercent}`)
         }
       }
       html += '</div>'
@@ -522,12 +479,10 @@ const diskChartOption = computed(() => ({
       const diskTotal = record.disk_total ?? nodeInfo.value?.disk_total ?? 0
       const diskPercent = diskTotal > 0 ? ((diskUsed / diskTotal) * 100).toFixed(1) : '0'
 
-      const timeStr = formatTimeForTooltip(record.time, selectedHours.value || 1)
-      const colorDot = `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${firstParam.color};margin-right:8px;flex-shrink:0"></span>`
-
+      const timeStr = formatChartTooltipTime(record.time, selectedHours.value || 1)
       let html = `<div style="font-weight:600;margin-bottom:6px;color:${chartThemeColors.value.textSecondary}">${timeStr}</div>`
       html += '<div style="display:flex;flex-direction:column;gap:4px">'
-      html += `<div style="display:flex;align-items:center">${colorDot}<span>磁盘已用</span><span style="margin-left:auto;font-weight:600;margin-left:16px">${formatBytes(diskUsed)} (${diskPercent}%)</span></div>`
+      html += renderTooltipRow(firstParam.color, '磁盘已用', `${formatBytes(diskUsed)} (${diskPercent}%)`)
       html += '</div>'
       return html
     },
@@ -584,14 +539,13 @@ const networkChartOption = computed(() => ({
       if (!record)
         return ''
 
-      const timeStr = formatTimeForTooltip(record.time, selectedHours.value || 1)
+      const timeStr = formatChartTooltipTime(record.time, selectedHours.value || 1)
       let html = `<div style="font-weight:600;margin-bottom:6px;color:${chartThemeColors.value.textSecondary}">${timeStr}</div>`
       html += '<div style="display:flex;flex-direction:column;gap:4px">'
 
       for (const item of p) {
-        const colorDot = `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${item.color};margin-right:8px;flex-shrink:0"></span>`
         const label = item.seriesName === '下载' ? '↓ 下载' : '↑ 上传'
-        html += `<div style="display:flex;align-items:center">${colorDot}<span>${label}</span><span style="margin-left:auto;font-weight:600;margin-left:16px">${formatBytes(item.value)}/s</span></div>`
+        html += renderTooltipRow(item.color, label, `${formatBytes(item.value)}/s`)
       }
       html += '</div>'
       return html
@@ -654,14 +608,13 @@ const connectionsChartOption = computed(() => ({
       if (!record)
         return ''
 
-      const timeStr = formatTimeForTooltip(record.time, selectedHours.value || 1)
+      const timeStr = formatChartTooltipTime(record.time, selectedHours.value || 1)
       let html = `<div style="font-weight:600;margin-bottom:6px;color:${chartThemeColors.value.textSecondary}">${timeStr}</div>`
       html += '<div style="display:flex;flex-direction:column;gap:4px">'
 
       for (const item of p) {
-        const colorDot = `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${item.color};margin-right:8px;flex-shrink:0"></span>`
-        const displayValue = item.value != null ? Math.round(item.value) : '-'
-        html += `<div style="display:flex;align-items:center">${colorDot}<span>${item.seriesName}</span><span style="margin-left:auto;font-weight:600;margin-left:16px">${displayValue}</span></div>`
+        const displayValue = item.value != null ? String(Math.round(item.value)) : '-'
+        html += renderTooltipRow(item.color, item.seriesName, displayValue)
       }
       html += '</div>'
       return html
@@ -725,13 +678,12 @@ const processChartOption = computed(() => ({
       if (!record)
         return ''
 
-      const timeStr = formatTimeForTooltip(record.time, selectedHours.value || 1)
-      const colorDot = `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${firstParam.color};margin-right:8px;flex-shrink:0"></span>`
-      const displayValue = firstParam.value != null ? Math.round(firstParam.value) : '-'
+      const timeStr = formatChartTooltipTime(record.time, selectedHours.value || 1)
+      const displayValue = firstParam.value != null ? String(Math.round(firstParam.value)) : '-'
 
       let html = `<div style="font-weight:600;margin-bottom:6px;color:${chartThemeColors.value.textSecondary}">${timeStr}</div>`
       html += '<div style="display:flex;flex-direction:column;gap:4px">'
-      html += `<div style="display:flex;align-items:center">${colorDot}<span>进程数</span><span style="margin-left:auto;font-weight:600;margin-left:16px">${displayValue}</span></div>`
+      html += renderTooltipRow(firstParam.color, '进程数', displayValue)
       html += '</div>'
       return html
     },
@@ -807,7 +759,7 @@ onBeforeUnmount(() => fetchRequestId++)
 <template>
   <div class="flex flex-col gap-4">
     <!-- 时间选择器 -->
-    <Tabs v-model="selectedView" class="w-full items-center">
+    <Tabs v-model="selectedView" class="w-full flex-row items-center">
       <TabsList :class="pickSurfaceClass('h-8 bg-background/60 pointer-events-auto rounded-md', 'h-8 bg-background/50 backdrop-blur-xl pointer-events-auto rounded-md')">
         <TabsTrigger
           v-for="view in availableViews" :key="view.label" :value="view.label"
@@ -860,16 +812,15 @@ onBeforeUnmount(() => fetchRequestId++)
             <div class="flex items-center justify-between">
               <span class="text-base font-bold">内存</span>
               <div class="text-xs flex gap-1 items-baseline">
-                <template v-if="latestStatus?.ram != null">
-                  <span>{{ formatBytesSplit(latestStatus.ram).value }}</span>
-                  <span>{{ formatBytesSplit(latestStatus.ram).unit }}</span>
+                <template v-if="latestFormatted.ram">
+                  <span>{{ latestFormatted.ram.value }}</span>
+                  <span>{{ latestFormatted.ram.unit }}</span>
                 </template>
                 <span v-else>-</span>
                 <span>·</span>
-                <template v-if="nodeInfo?.mem_total">
-                  <span>{{
-                    formatBytesSplit(nodeInfo.mem_total).value }}</span>
-                  <span>{{ formatBytesSplit(nodeInfo.mem_total).unit }}</span>
+                <template v-if="latestFormatted.memTotal">
+                  <span>{{ latestFormatted.memTotal.value }}</span>
+                  <span>{{ latestFormatted.memTotal.unit }}</span>
                 </template>
                 <span v-else>-</span>
               </div>
@@ -877,15 +828,15 @@ onBeforeUnmount(() => fetchRequestId++)
             <div class="mt-1 flex items-center justify-between text-xs">
               <span class="text-muted-foreground">Swap</span>
               <div class="flex gap-1 items-baseline">
-                <template v-if="latestStatus?.swap != null">
-                  <span>{{ formatBytesSplit(latestStatus.swap).value }}</span>
-                  <span>{{ formatBytesSplit(latestStatus.swap).unit }}</span>
+                <template v-if="latestFormatted.swap">
+                  <span>{{ latestFormatted.swap.value }}</span>
+                  <span>{{ latestFormatted.swap.unit }}</span>
                 </template>
                 <span v-else>-</span>
                 <span>·</span>
-                <template v-if="swapTotal != null">
-                  <span>{{ formatBytesSplit(swapTotal).value }}</span>
-                  <span>{{ formatBytesSplit(swapTotal).unit }}</span>
+                <template v-if="latestFormatted.swapTotal">
+                  <span>{{ latestFormatted.swapTotal.value }}</span>
+                  <span>{{ latestFormatted.swapTotal.unit }}</span>
                 </template>
                 <span v-else>-</span>
               </div>
@@ -906,15 +857,15 @@ onBeforeUnmount(() => fetchRequestId++)
             <div class="flex items-center justify-between">
               <span class="text-base font-bold">磁盘</span>
               <div class="text-xs flex gap-1 items-baseline">
-                <template v-if="latestStatus?.disk != null">
-                  <span>{{ formatBytesSplit(latestStatus.disk).value }}</span>
-                  <span>{{ formatBytesSplit(latestStatus.disk).unit }}</span>
+                <template v-if="latestFormatted.disk">
+                  <span>{{ latestFormatted.disk.value }}</span>
+                  <span>{{ latestFormatted.disk.unit }}</span>
                 </template>
                 <span v-else>-</span>
                 <span>·</span>
-                <template v-if="nodeInfo?.disk_total">
-                  <span>{{ formatBytesSplit(nodeInfo.disk_total).value }}</span>
-                  <span>{{ formatBytesSplit(nodeInfo.disk_total).unit }}</span>
+                <template v-if="latestFormatted.diskTotal">
+                  <span>{{ latestFormatted.diskTotal.value }}</span>
+                  <span>{{ latestFormatted.diskTotal.unit }}</span>
                 </template>
                 <span v-else>-</span>
               </div>
@@ -937,17 +888,17 @@ onBeforeUnmount(() => fetchRequestId++)
               <div class="text-xs flex gap-2 items-baseline">
                 <span class="flex flex-row items-center justify-center gap-0.5">
                   <Icon icon="tabler:chevron-up" width="12" height="12" />
-                  <template v-if="latestStatus?.net_out != null">
-                    {{ formatBytesSplit(latestStatus.net_out).value }}
-                    {{ formatBytesSplit(latestStatus.net_out).unit }}/s
+                  <template v-if="latestFormatted.netOut">
+                    {{ latestFormatted.netOut.value }}
+                    {{ latestFormatted.netOut.unit }}/s
                   </template>
                   <template v-else>-</template>
                 </span>
                 <span class="flex flex-row items-center justify-center gap-0.5">
                   <Icon icon="tabler:chevron-down" width="12" height="12" />
-                  <template v-if="latestStatus?.net_in != null">
-                    {{ formatBytesSplit(latestStatus.net_in).value }}
-                    {{ formatBytesSplit(latestStatus.net_in).unit }}/s
+                  <template v-if="latestFormatted.netIn">
+                    {{ latestFormatted.netIn.value }}
+                    {{ latestFormatted.netIn.unit }}/s
                   </template>
                   <template v-else>-</template>
                 </span>

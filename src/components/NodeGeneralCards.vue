@@ -2,6 +2,7 @@
 import type { NodeData } from '@/stores/nodes'
 import type { CurrencyCode } from '@/utils/financeHelper'
 import { Icon } from '@iconify/vue'
+import { onClickOutside } from '@vueuse/core'
 import { computed, defineAsyncComponent, onMounted, ref, useId } from 'vue'
 import { CardX } from '@/components/ui/card-x'
 import { DataTooltip } from '@/components/ui/data-tooltip'
@@ -39,8 +40,14 @@ const metricSwitchTransitionProps = computed(() => ({
 }))
 
 const openFinanceCard = ref(false)
+const financeWrapperRef = ref<HTMLElement | null>(null)
 const financeTriggerId = useId()
 const financePanelId = useId()
+
+onClickOutside(financeWrapperRef, () => {
+  if (openFinanceCard.value)
+    openFinanceCard.value = false
+})
 
 function closeFinanceCard() {
   openFinanceCard.value = false
@@ -80,12 +87,13 @@ const formattedSpeedUp = computed(() => formatBytesPerSecondSplit(totalSpeed.val
 const formattedSpeedDown = computed(() => formatBytesPerSecondSplit(totalSpeed.value.down, appStore.byteDecimals))
 
 // ==================== 内存 / 硬盘 汇总 ====================
-// 离线节点的 ram / disk 为 0，不影响 used 求和；mem_total / disk_total 是静态库存信息，按全量统计
+// used 仅统计在线节点（避免离线节点的历史残留数据干扰当前用量）；mem_total / disk_total 按全量库存统计
 const totalMemory = computed(() => {
   let used = 0
   let total = 0
   for (const node of summaryNodes.value) {
-    used += node.ram || 0
+    if (node.online)
+      used += node.ram || 0
     total += node.mem_total || 0
   }
   return { used, total }
@@ -95,7 +103,8 @@ const totalDisk = computed(() => {
   let used = 0
   let total = 0
   for (const node of summaryNodes.value) {
-    used += node.disk || 0
+    if (node.online)
+      used += node.disk || 0
     total += node.disk_total || 0
   }
   return { used, total }
@@ -171,12 +180,24 @@ const exchangeRateRows = computed(() => financeRateCurrencies.map((currency) => 
 const showEarth = computed(() => appStore.earthViewMode === 'earth' || appStore.earthViewMode === 'earth-stop')
 const showMaps = computed(() => appStore.earthViewMode === 'maps')
 const showVisualPanel = computed(() => showEarth.value || showMaps.value)
+const visibleCardCount = computed(() => 4 + (financeNodes.value.length ? 1 : 0) + (trafficNodes.value.length ? 1 : 0))
 const wrapperClass = computed(() => showVisualPanel.value
   ? 'p-4 grid grid-cols-12 grid-rows-1 gap-2 h-auto md:h-58'
   : 'p-4 grid grid-cols-1 gap-2 h-auto')
-const cardGridClass = computed(() => showVisualPanel.value
-  ? 'h-42 -mt-42 md:mt-0 col-span-12 row-start-3 z-9 md:h-auto md:col-span-6 md:row-start-1 grid grid-cols-12 grid-rows-2 gap-2'
-  : 'col-span-1 grid grid-cols-3 md:grid-cols-6 gap-2')
+const cardGridClass = computed(() => {
+  if (showVisualPanel.value) {
+    const colsClass = visibleCardCount.value <= 4 ? 'grid-cols-2' : 'grid-cols-3'
+    return `h-42 -mt-42 md:mt-0 col-span-12 row-start-3 z-9 md:h-auto md:col-span-6 md:row-start-1 grid ${colsClass} grid-rows-2 grid-flow-col gap-2`
+  }
+  const desktopCols = visibleCardCount.value === 6
+    ? 'md:grid-cols-6'
+    : visibleCardCount.value === 5
+      ? 'md:grid-cols-5'
+      : 'md:grid-cols-4'
+  const mobileCols = visibleCardCount.value <= 4 ? 'grid-cols-2' : 'grid-cols-3'
+  return `col-span-1 grid ${mobileCols} ${desktopCols} gap-2`
+})
+const cardSizingClass = computed(() => showVisualPanel.value ? '' : 'min-h-18 md:min-h-24')
 
 onMounted(async () => {
   exchangeRateBaseCurrency.value = financeHelper.getStoredFinanceCurrency()
@@ -198,7 +219,7 @@ onMounted(async () => {
         class="group h-full border-none rounded-md transition-all"
         :class="[
           pickSurfaceClass('bg-background/60 hover:bg-background', 'bg-background/50 hover:bg-background backdrop-blur-xs'),
-          showVisualPanel ? 'col-span-4 row-span-1 col-start-1 row-start-1' : 'col-span-1 row-start-1 col-start-1 min-h-18 md:min-h-24 md:row-start-1 md:col-start-1',
+          cardSizingClass,
         ]"
         content-class="h-full !p-3"
       >
@@ -206,7 +227,7 @@ onMounted(async () => {
           <div class="flex items-start justify-between">
             <span class="text-xs font-medium tracking-wider text-muted-foreground">内存用量</span>
             <Icon
-              icon="tabler:cash" :width="20" :height="20"
+              icon="icon-park-outline:memory" :width="20" :height="20"
               class="text-slate-500/20 group-hover:text-slate-500 transition-colors"
             />
           </div>
@@ -215,7 +236,7 @@ onMounted(async () => {
               :key="`memory-${summaryTransitionKey}`" class="flex items-baseline gap-1 min-w-0"
               :style="getMetricSwitchStyle(0)"
             >
-              <span class="text-md md:text-2xl font-bold leading-none tracking-tight">
+              <span class="text-base md:text-2xl font-bold leading-none tracking-tight">
                 {{ formattedMemoryUsed.value }}
               </span>
               <span class="text-[11px] md:text-xs font-medium text-muted-foreground truncate">
@@ -230,7 +251,7 @@ onMounted(async () => {
         class="group h-full border-none rounded-md transition-all"
         :class="[
           pickSurfaceClass('bg-background/60 hover:bg-background', 'bg-background/50 hover:bg-background backdrop-blur-xs'),
-          showVisualPanel ? 'col-span-4 row-span-1 col-start-1 row-start-2' : 'col-span-1 row-start-2 col-start-1 min-h-18 md:min-h-24 md:row-start-1 md:col-start-2',
+          cardSizingClass,
         ]"
         content-class="h-full !p-3"
       >
@@ -247,7 +268,7 @@ onMounted(async () => {
               :key="`disk-${summaryTransitionKey}`" class="flex items-baseline gap-1 min-w-0"
               :style="getMetricSwitchStyle(1)"
             >
-              <span class="text-md md:text-2xl font-bold leading-none tracking-tight">{{ formattedDiskUsed.value
+              <span class="text-base md:text-2xl font-bold leading-none tracking-tight">{{ formattedDiskUsed.value
               }}</span>
               <span class="text-[11px] md:text-xs font-medium text-muted-foreground truncate">
                 {{ formattedDiskUsed.unit }} / {{ formattedDiskTotal.value }} {{ formattedDiskTotal.unit }}
@@ -258,8 +279,9 @@ onMounted(async () => {
       </CardX>
       <div
         v-if="financeNodes.length"
+        ref="financeWrapperRef"
         class="relative w-full h-full"
-        :class="showVisualPanel ? 'col-span-4 row-span-1 col-start-5 row-start-1' : 'col-span-1 row-start-1 col-start-2 min-h-18 md:min-h-24 md:row-start-1 md:col-start-3'"
+        :class="cardSizingClass"
         @keydown.esc.stop="closeFinanceCard"
       >
         <CardX
@@ -283,7 +305,7 @@ onMounted(async () => {
                 :key="`remaining-value-${summaryTransitionKey}`" class="flex items-baseline gap-1 min-w-0"
                 :style="getMetricSwitchStyle(2)"
               >
-                <span class="text-md md:text-2xl font-bold leading-none tracking-tight">
+                <span class="text-base md:text-2xl font-bold leading-none tracking-tight">
                   {{ financeHeadline.symbol }}{{ financeHeadline.value }}
                 </span>
                 <span class="block truncate text-[11px] md:text-xs font-medium text-muted-foreground">
@@ -368,7 +390,7 @@ onMounted(async () => {
         class="group h-full border-none rounded-md transition-all"
         :class="[
           pickSurfaceClass('bg-background/60 hover:bg-background', 'bg-background/50 hover:bg-background backdrop-blur-xs'),
-          showVisualPanel ? 'col-span-4 row-span-1 col-start-5 row-start-2' : 'col-span-1 row-start-2 col-start-2 min-h-18 md:min-h-24 md:row-start-1 md:col-start-4',
+          cardSizingClass,
         ]"
         content-class="h-full !p-3"
       >
@@ -390,7 +412,7 @@ onMounted(async () => {
                 :key="`traffic-${summaryTransitionKey}`" class="flex items-baseline gap-1"
                 :style="getMetricSwitchStyle(3)"
               >
-                <span class="inline-block text-md md:text-2xl font-bold leading-none tracking-tight">
+                <span class="inline-block text-base md:text-2xl font-bold leading-none tracking-tight">
                   {{ totalTrafficTooltip.value }}
                 </span>
                 <span class="inline-block text-[11px] md:text-xs font-medium text-muted-foreground">
@@ -407,7 +429,7 @@ onMounted(async () => {
         class="group h-full border-none rounded-md transition-all"
         :class="[
           pickSurfaceClass('bg-background/60 hover:bg-background', 'bg-background/50 hover:bg-background backdrop-blur-xs'),
-          showVisualPanel ? 'col-span-4 row-span-1 col-start-9 row-start-1' : 'col-span-1 row-start-1 col-start-3 min-h-18 md:min-h-24 md:row-start-1 md:col-start-5',
+          cardSizingClass,
         ]"
         content-class="h-full !p-3"
       >
@@ -424,7 +446,7 @@ onMounted(async () => {
               :key="`speed-up-${summaryTransitionKey}`" class="flex items-baseline gap-1"
               :style="getMetricSwitchStyle(4)"
             >
-              <span class="text-md md:text-2xl font-bold leading-none tracking-tight">{{ formattedSpeedUp.value
+              <span class="text-base md:text-2xl font-bold leading-none tracking-tight">{{ formattedSpeedUp.value
               }}</span>
               <span class="text-[11px] md:text-xs font-medium text-muted-foreground">{{ formattedSpeedUp.unit }}</span>
             </div>
@@ -436,7 +458,7 @@ onMounted(async () => {
         class="group h-full border-none rounded-md transition-all"
         :class="[
           pickSurfaceClass('bg-background/60 hover:bg-background', 'bg-background/50 hover:bg-background backdrop-blur-xs'),
-          showVisualPanel ? 'col-span-4 row-span-1 col-start-9 row-start-2' : 'col-span-1 row-start-2 col-start-3 min-h-18 md:min-h-24 md:row-start-1 md:col-start-6',
+          cardSizingClass,
         ]"
         content-class="h-full !p-3"
       >
@@ -453,7 +475,7 @@ onMounted(async () => {
               :key="`speed-down-${summaryTransitionKey}`" class="flex items-baseline gap-1"
               :style="getMetricSwitchStyle(5)"
             >
-              <span class="text-md md:text-2xl font-bold leading-none tracking-tight">
+              <span class="text-base md:text-2xl font-bold leading-none tracking-tight">
                 {{ formattedSpeedDown.value }}
               </span>
               <span class="text-[11px] md:text-xs font-medium text-muted-foreground">{{ formattedSpeedDown.unit

@@ -22,6 +22,9 @@ import {
 } from '@/utils/api'
 
 const CONNECTION_NOTICE_DELAY_MS = 30_000
+const SOCKET_STABLE_CONFIRM_MS = 5_000
+const BACKGROUND_RESYNC_THRESHOLD_MS = 60_000
+const SOCKET_IDLE_RESYNC_MS = 120_000
 
 interface WsMessage {
   type: string
@@ -74,6 +77,7 @@ class InitManager {
   private nodesStore = useNodesStore()
   private socket: WebSocket | null = null
   private reconnectTimer: ReturnType<typeof setTimeout> | undefined
+  private socketStableTimer: ReturnType<typeof setTimeout> | undefined
   private reconnectAttempts = 0
   private liveUpdateTimer: ReturnType<typeof setInterval> | null = null
   private pendingStatuses = new Map<string, NodeStatus>()
@@ -83,6 +87,8 @@ class InitManager {
   private connectionIssue: 'retrying' | 'failed' | null = null
   private connectionFailedAt: number | null = null
   private connectionNoticeId: string | number | undefined
+  private lastSocketActivityAt = 0
+  private hiddenAt: number | null = null
 
   private get activeUuid(): string | null {
     const route = router.currentRoute.value
@@ -91,6 +97,7 @@ class InitManager {
 
   async init(): Promise<void> {
     document.addEventListener('visibilitychange', this.handleVisibilityChange)
+    window.addEventListener('online', this.handleOnline)
     try {
       let config = await fetchSiteConfig()
       if (this.destroyed)
@@ -126,11 +133,14 @@ class InitManager {
       await router.isReady()
       if (this.destroyed)
         return
-      this.stopRouteWatch = watch(() => router.currentRoute.value.fullPath, this.reloadPage)
+      this.stopRouteWatch = watch(
+        () => [router.currentRoute.value.name, router.currentRoute.value.params.id],
+        this.reloadPage,
+      )
       this.liveUpdateTimer = setInterval(() => {
         this.flushPendingStatuses()
-        // A disconnected browser cannot infer outages from its stale snapshot.
-        if (this.socket?.readyState === WebSocket.OPEN)
+        // A disconnected or background-throttled browser cannot infer outages from its stale snapshot.
+        if (!document.hidden && this.socket?.readyState === WebSocket.OPEN)
           this.nodesStore.refreshOnlineState()
       }, 1000)
       await this.refreshPage()
@@ -161,6 +171,7 @@ class InitManager {
       return
     const uuid = this.activeUuid
     this.nodesStore.pageLoading = true
+    this.nodesStore.pageError = null
     try {
       if (uuid) {
         const server = await fetchServer(uuid)
@@ -192,13 +203,21 @@ class InitManager {
       if (revision !== this.revision || this.destroyed)
         return
       if (error instanceof ApiError && [401, 403, 404].includes(error.code ?? 0)) {
-        this.nodesStore.clearNodes()
+        if (error.code === 404 && uuid) {
+          this.nodesStore.removeNode(uuid)
+          this.nodesStore.pageError = 'not-found'
+        }
+        else {
+          this.nodesStore.clearNodes()
+          this.nodesStore.pageError = error.code === 404 ? 'not-found' : 'forbidden'
+        }
         this.clearConnectionNotice()
         // Missing nodes already have an empty state; access failures need an action.
         if (error.code !== 404)
           this.reportConnectionIssue('failed')
       }
       else {
+        this.nodesStore.pageError = 'network'
         this.scheduleReconnect(revision, reconnectAttempt + 1)
       }
       throw error
@@ -217,8 +236,10 @@ class InitManager {
       id: sample.serverId,
       ...sample.data,
       boot_time: Math.max(0, timestamp(sample.data.boot_time, 0)) || Date.parse(currentNode?.boot_time ?? ''),
+      // Ensure report_timestamp inside sample.data cannot override this sample's own timestamp.
+      report_timestamp: sample.ts,
       last_updated: sample.ts,
-    })
+    } as Parameters<typeof adaptServer>[0])
 
     this.nodesStore.recordPingSample(uuid, status)
     if (current && sample.ts < Date.parse(current.time))
@@ -292,8 +313,19 @@ class InitManager {
     socket.addEventListener('open', () => {
       if (!isCurrent())
         return
-      // A fresh HTTP snapshot and an open socket confirm recovery together.
-      this.clearConnectionNotice()
+      this.lastSocketActivityAt = performance.now()
+      // Confirm recovery after data flows or a short stable open window, so post-handshake close loops still surface a notice.
+      clearTimeout(this.socketStableTimer)
+      if (!this.nodesStore.nodes.length) {
+        this.clearConnectionNotice()
+      }
+      else {
+        this.socketStableTimer = setTimeout(() => {
+          this.socketStableTimer = undefined
+          if (isCurrent() && socket.readyState === WebSocket.OPEN)
+            this.clearConnectionNotice()
+        }, SOCKET_STABLE_CONFIRM_MS)
+      }
       // Explicit subscription also asks the backend to resume fast agent reports.
       socket.send(JSON.stringify({
         type: 'subscribe',
@@ -304,6 +336,7 @@ class InitManager {
     socket.addEventListener('message', (event) => {
       if (!isCurrent())
         return
+      this.lastSocketActivityAt = performance.now()
       let message: WsMessage
       try {
         message = JSON.parse(String(event.data)) as WsMessage
@@ -312,14 +345,17 @@ class InitManager {
         return
       }
       if (message?.type === 'batchUpdate') {
-        // Reset backoff only once data flows, so post-handshake closes still back off.
+        // Reset backoff and notice only once data flows, so post-handshake closes still back off.
         this.reconnectAttempts = 0
+        this.clearConnectionNotice()
         this.applyBatch(message, serverId)
       }
     })
     socket.addEventListener('close', () => {
       if (!isCurrent())
         return
+      clearTimeout(this.socketStableTimer)
+      this.socketStableTimer = undefined
       this.socket = null
       this.scheduleReconnect(revision, this.reconnectAttempts + 1)
     })
@@ -374,12 +410,46 @@ class InitManager {
     // Returning from the background starts a fresh grace period.
     this.connectionFailedAt = null
     if (document.hidden) {
+      this.hiddenAt = performance.now()
       if (this.connectionNoticeId !== undefined)
         toast.dismiss(this.connectionNoticeId)
       this.connectionNoticeId = undefined
+      return
     }
-    else if (this.connectionIssue) {
+
+    const hiddenDuration = this.hiddenAt !== null ? performance.now() - this.hiddenAt : 0
+    this.hiddenAt = null
+
+    // If a backoff timer is waiting, reconnect right away instead of sitting idle up to 30s.
+    if (this.reconnectTimer !== undefined) {
+      clearTimeout(this.reconnectTimer)
+      this.reconnectTimer = undefined
+      void this.refreshPage(0).catch(error => console.error('[Live] Foreground reconnect failed:', error))
+      return
+    }
+
+    // Proactively resync if the tab stayed hidden long enough for the OS/NAT to silently drop the socket.
+    if (
+      this.stopRouteWatch
+      && hiddenDuration >= BACKGROUND_RESYNC_THRESHOLD_MS
+      && (this.socket?.readyState !== WebSocket.OPEN || performance.now() - this.lastSocketActivityAt >= SOCKET_IDLE_RESYNC_MS)
+    ) {
+      void this.refreshPage(0).catch(error => console.error('[Live] Foreground resync failed:', error))
+      return
+    }
+
+    if (this.connectionIssue) {
       this.reportConnectionIssue(this.connectionIssue)
+    }
+  }
+
+  private handleOnline = (): void => {
+    if (this.destroyed || !this.stopRouteWatch)
+      return
+    if (this.reconnectTimer !== undefined || this.socket?.readyState !== WebSocket.OPEN) {
+      clearTimeout(this.reconnectTimer)
+      this.reconnectTimer = undefined
+      void this.refreshPage(0).catch(error => console.error('[Live] Online reconnect failed:', error))
     }
   }
 
@@ -387,6 +457,8 @@ class InitManager {
     const socket = this.socket
     this.socket = null
     socket?.close()
+    clearTimeout(this.socketStableTimer)
+    this.socketStableTimer = undefined
     clearTimeout(this.reconnectTimer)
     this.reconnectTimer = undefined
     this.reconnectAttempts = 0
@@ -397,6 +469,7 @@ class InitManager {
     this.destroyed = true
     this.revision++
     document.removeEventListener('visibilitychange', this.handleVisibilityChange)
+    window.removeEventListener('online', this.handleOnline)
     this.clearConnectionNotice()
     this.stopRouteWatch?.()
     this.closeSocket()

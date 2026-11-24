@@ -1,17 +1,18 @@
 <script setup lang="ts">
 import type { NodeData } from '@/stores/nodes'
 import { Icon } from '@iconify/vue'
-import { useDevicePixelRatio, useElementSize } from '@vueuse/core'
 import { DropdownMenuContent, DropdownMenuItem, DropdownMenuPortal, DropdownMenuRoot, DropdownMenuTrigger } from 'reka-ui'
-import { computed, ref, useTemplateRef } from 'vue'
+import { computed, onBeforeUnmount, ref, useTemplateRef, watch } from 'vue'
 import { DataTooltip } from '@/components/ui/data-tooltip'
 import { useNodePingDisplay } from '@/composables/useNodePingDisplay'
 import { NODE_PING_BAR_COUNT } from '@/composables/useNodePingStats'
+import { observeElementWidth, useSharedDevicePixelRatio } from '@/composables/useSharedBrowserState'
 import { useAppStore } from '@/stores/app'
 import { message } from '@/utils/message'
 
 const props = defineProps<{ node: NodeData, lineKey: string, index: number, lines: string[] }>()
 const emit = defineEmits<{ pingClick: [] }>()
+
 const appStore = useAppStore()
 const name = computed(() => props.node.ping?.[props.lineKey]?.name ?? props.lineKey)
 const { latencyDisplay, lossDisplay, latencyPanelTooltip, lossPanelTooltip, latencyRenderBars, lossRenderBars } = useNodePingDisplay(() => props.node.uuid, () => props.lineKey)
@@ -19,10 +20,32 @@ const panels = computed(() => [
   { name: '延迟', bars: latencyRenderBars.value },
   { name: '丢包', bars: lossRenderBars.value },
 ])
-const hoveredBarIndex = ref<number | null>(null)
+const hoveredBar = ref<{ panel: string, index: number } | null>(null)
 const historyPanels = useTemplateRef<InstanceType<typeof DataTooltip>[]>('historyPanels')
-const { width: panelWidth } = useElementSize(() => historyPanels.value?.[0])
-const { pixelRatio } = useDevicePixelRatio()
+const panelWidth = ref(0)
+let stopWidthObserve: (() => void) | null = null
+
+watch(
+  () => historyPanels.value?.[0]?.$el as Element | undefined,
+  (el) => {
+    stopWidthObserve?.()
+    stopWidthObserve = null
+    if (!el)
+      return
+    panelWidth.value = el.getBoundingClientRect().width
+    stopWidthObserve = observeElementWidth(el, (width) => {
+      panelWidth.value = width
+    })
+  },
+  { flush: 'post', immediate: true },
+)
+
+onBeforeUnmount(() => {
+  stopWidthObserve?.()
+  stopWidthObserve = null
+})
+
+const { pixelRatio } = useSharedDevicePixelRatio()
 const barLayout = computed(() => {
   const ratio = pixelRatio.value
   const count = NODE_PING_BAR_COUNT
@@ -46,6 +69,11 @@ const barLayout = computed(() => {
     lefts: Array.from({ length: count }, (_, index) => `${Math.round(index * step) / ratio}px`),
   }
 })
+
+function getPanelTooltip(panelName: string, bars: typeof latencyRenderBars.value): string | undefined {
+  const index = hoveredBar.value?.panel === panelName ? hoveredBar.value.index : bars.length - 1
+  return bars[index]?.tooltip
+}
 
 async function selectLine(key: string) {
   try {
@@ -98,17 +126,17 @@ async function selectLine(key: string) {
     </DataTooltip>
     <DataTooltip
       v-for="panel in panels" :key="panel.name" ref="historyPanels" as="button" type="button" placement="cursor"
-      :content="panel.bars[hoveredBarIndex ?? panel.bars.length - 1]?.tooltip"
+      :content="getPanelTooltip(panel.name, panel.bars)"
       content-class="whitespace-nowrap w-max px-1.5 !leading-[1.2] text-[11px]"
       class="block h-2 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       :style="barLayout.vars" :aria-label="`${name} ${panel.name}历史，查看图表`" @click="emit('pingClick')"
-      @pointerleave="hoveredBarIndex = null"
+      @pointerleave="hoveredBar?.panel === panel.name && (hoveredBar = null)"
     >
       <span
         v-for="(bar, barIndex) in panel.bars" :key="bar.key"
         class="absolute top-1/2 h-(--bar-h) w-(--bar-w) -translate-y-1/2 rounded-[1px] transition-transform duration-150 hover:scale-y-200" :class="bar.className"
         :style="{ left: barLayout.lefts[barIndex] }"
-        @pointerenter="hoveredBarIndex = barIndex"
+        @pointerenter="hoveredBar = { panel: panel.name, index: barIndex }"
       />
     </DataTooltip>
   </div>

@@ -1,16 +1,21 @@
 <script setup lang="ts">
 import type { HTMLAttributes } from 'vue'
-import { useElementSize, useMediaQuery } from '@vueuse/core'
-import { computed, onBeforeUnmount, ref, useId, useSlots, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, useId, useSlots, watch } from 'vue'
+import { useCoarsePointer } from '@/composables/useSharedBrowserState'
 import { cn } from '@/lib/utils'
 
 type DataTooltipPlacement = 'top' | 'bottom' | 'left' | 'right' | 'cursor'
+type DataTooltipTouchBehavior = 'auto' | 'toggle' | 'passthrough'
 
 interface Props {
   /** 提示文本，留空且无 #content 插槽时不渲染气泡 */
   content?: string
+  /** 禁用气泡（即使提供了 #content 插槽也不再触发或拦截事件） */
+  disabled?: boolean
   /** 气泡方位；cursor 跟随指针并保持在视口内 */
   placement?: DataTooltipPlacement
+  /** 触屏点击行为：passthrough 不拦截点击，toggle 切换气泡，auto 对 button/link 自动透传 */
+  touchBehavior?: DataTooltipTouchBehavior
   /** 气泡宽度，number 视为 px；默认由内容撑起 */
   width?: number | string
   /** 气泡高度，number 视为 px；默认由内容撑起 */
@@ -24,7 +29,9 @@ interface Props {
 }
 
 const props = withDefaults(defineProps<Props>(), {
+  disabled: false,
   placement: 'top',
+  touchBehavior: 'auto',
   as: 'div',
 })
 const slots = useSlots()
@@ -33,13 +40,14 @@ const rootRef = ref<HTMLElement | null>(null)
 const tooltipRef = ref<HTMLElement | null>(null)
 const tooltipId = useId()
 const cursor = ref({ x: 0, y: 0 })
-const { width: tooltipWidth, height: tooltipHeight } = useElementSize(tooltipRef, undefined, { box: 'border-box' })
+const tooltipSize = ref({ width: 0, height: 0 })
 const isOpen = ref(false)
 const isHoverOpen = ref(false)
 let lastTouchOpenAt = 0
 let shouldStopNextClick = false
 
-const hasTooltip = computed(() => Boolean(props.content || slots.content))
+const hasTooltip = computed(() => !props.disabled && Boolean(props.content || slots.content))
+const isVisible = computed(() => hasTooltip.value && (isOpen.value || isHoverOpen.value))
 
 const placementClass: Record<DataTooltipPlacement, string> = {
   top: 'bottom-full left-1/2 mb-2 -translate-x-1/2',
@@ -53,10 +61,19 @@ const cursorStyle = computed(() => {
   if (props.placement !== 'cursor' || typeof window === 'undefined')
     return {}
   return {
-    left: `${Math.max(8, Math.min(cursor.value.x + 12, window.innerWidth - tooltipWidth.value - 8))}px`,
-    top: `${Math.max(8, Math.min(cursor.value.y + 16, window.innerHeight - tooltipHeight.value - 8))}px`,
+    left: `${Math.max(8, Math.min(cursor.value.x + 12, window.innerWidth - tooltipSize.value.width - 8))}px`,
+    top: `${Math.max(8, Math.min(cursor.value.y + 16, window.innerHeight - tooltipSize.value.height - 8))}px`,
   }
 })
+
+function measureTooltipSize() {
+  if (props.placement !== 'cursor' || !tooltipRef.value)
+    return
+  const rect = tooltipRef.value.getBoundingClientRect()
+  if (rect.width !== tooltipSize.value.width || rect.height !== tooltipSize.value.height) {
+    tooltipSize.value = { width: rect.width, height: rect.height }
+  }
+}
 
 function updateCursor(event: PointerEvent | FocusEvent) {
   if (props.placement !== 'cursor')
@@ -76,10 +93,21 @@ const sizeStyle = computed(() => {
   return style
 })
 
-const hasCoarsePointer = useMediaQuery('(hover: none), (pointer: coarse)')
+const hasCoarsePointer = useCoarsePointer()
 
 function isTouchLikePointer(event: PointerEvent) {
   return event.pointerType !== 'mouse' || hasCoarsePointer.value
+}
+
+function shouldPassthroughTouch(event: PointerEvent): boolean {
+  if (props.touchBehavior === 'passthrough')
+    return true
+  if (props.touchBehavior === 'toggle')
+    return false
+  if (props.as === 'button' || props.as === 'a')
+    return true
+  const target = event.target instanceof Element ? event.target : null
+  return Boolean(target?.closest('a[href]'))
 }
 
 function closeTooltip() {
@@ -119,6 +147,8 @@ function handleDocumentScroll() {
 function handlePointerDown(event: PointerEvent) {
   if (!hasTooltip.value || !isTouchLikePointer(event))
     return
+  if (shouldPassthroughTouch(event))
+    return
 
   updateCursor(event)
   lastTouchOpenAt = Date.now()
@@ -157,7 +187,7 @@ function closeHoverTooltip() {
   isHoverOpen.value = false
 }
 
-watch(() => isOpen.value || isHoverOpen.value, (open) => {
+watch(isVisible, async (open) => {
   if (typeof document === 'undefined')
     return
 
@@ -167,11 +197,20 @@ watch(() => isOpen.value || isHoverOpen.value, (open) => {
     if (props.placement === 'cursor') {
       document.addEventListener('scroll', handleDocumentScroll, true)
       window.addEventListener('resize', closeTooltip)
+      await nextTick()
+      measureTooltipSize()
     }
     return
   }
 
   removeDocumentListeners()
+})
+
+watch(() => props.content, async () => {
+  if (props.placement === 'cursor' && isVisible.value) {
+    await nextTick()
+    measureTooltipSize()
+  }
 })
 
 watch(hasTooltip, (value) => {
@@ -188,7 +227,7 @@ onBeforeUnmount(removeDocumentListeners)
     ref="rootRef"
     data-slot="data-tooltip"
     :data-state="isOpen ? 'open' : 'closed'"
-    :aria-describedby="hasTooltip && (isOpen || isHoverOpen) ? tooltipId : undefined"
+    :aria-describedby="isVisible ? tooltipId : undefined"
     :class="cn('group/data-tooltip relative inline-block', props.class)"
     @pointerdown.capture="handlePointerDown"
     @pointermove="openHoverTooltip"
@@ -200,7 +239,7 @@ onBeforeUnmount(removeDocumentListeners)
     <slot />
     <Teleport to="body" :disabled="placement !== 'cursor'">
       <span
-        v-if="hasTooltip && (isOpen || isHoverOpen)"
+        v-if="isVisible"
         :id="tooltipId"
         ref="tooltipRef"
         role="tooltip"

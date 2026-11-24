@@ -65,6 +65,17 @@ const expiryText = computed(() => {
 })
 const planText = computed(() => hasConfiguredPrice(props.node) ? formatPriceWithCycle(props.node.price, props.node.billing_cycle, props.node.currency, appStore.lang) : '--')
 
+const showTrafficCol = computed(() => props.node.showTraffic !== false)
+const showFinanceCol = computed(() => props.node.showPrice !== false || props.node.showExpire !== false)
+const middleStatsGridClass = computed(() => {
+  const cols = 1 + (showTrafficCol.value ? 1 : 0) + (showFinanceCol.value ? 1 : 0)
+  if (cols === 3)
+    return 'grid-cols-3'
+  if (cols === 2)
+    return 'grid-cols-2'
+  return 'grid-cols-1'
+})
+
 function openPingDialog() {
   emit('pingClick', props.node)
 }
@@ -87,7 +98,7 @@ function openPingDialog() {
         </div>
         <RouterLink
           :to="{ name: 'instance-detail', params: { id: node.uuid } }"
-          class="text-md font-bold flex-1 min-w-0 truncate rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          class="text-base font-bold flex-1 min-w-0 truncate rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           :aria-label="`${node.name}，${node.online ? '在线' : '离线'}，查看详情`" @click.stop
         >
           {{ props.node.name }}
@@ -118,8 +129,8 @@ function openPingDialog() {
             </div>
             <ProgressThin :percentage="props.node.cpu ?? 0" :status="cpuStatus" :height="4" />
             <div class="text-[11px] text-muted-foreground truncate">
-              {{ props.node.load.toFixed(2) ?? 0 }}, {{ props.node.load5.toFixed(2) ?? 0 }}, {{
-                props.node.load15.toFixed(2) ?? 0 }}
+              {{ (props.node.load ?? 0).toFixed(2) }}, {{ (props.node.load5 ?? 0).toFixed(2) }}, {{
+                (props.node.load15 ?? 0).toFixed(2) }}
             </div>
           </div>
 
@@ -132,7 +143,7 @@ function openPingDialog() {
               <span>{{ memPercentage.toFixed(1) }}%</span>
             </div>
             <ProgressThin :percentage="memPercentage" :status="memStatus" :height="4" />
-            <DataTooltip placement="top" class="block" :content-class="[!props.node.swap && '!hidden']">
+            <DataTooltip placement="top" class="block" :disabled="!props.node.swap">
               <div class="text-[11px] text-muted-foreground truncate">
                 {{ formatBytes(props.node.ram ?? 0) }} / {{ formatBytes(props.node.mem_total ?? 0) }}
               </div>
@@ -205,7 +216,7 @@ function openPingDialog() {
           </div>
           <div class="flex flex-col gap-y-2" :class="[!props.node.online && 'blur-xs opacity-60 pointer-events-none']">
             <!-- Glassmorphism 的三列双行结构，沿用 Emerald 的格式化与配色。 -->
-            <div class="grid grid-cols-3 gap-2">
+            <div class="grid gap-2" :class="middleStatsGridClass">
               <div class="flex min-w-0 flex-col gap-1">
                 <div class="flex items-center gap-1 text-green-600">
                   <Icon icon="tabler:chevron-up" width="12" height="12" class="shrink-0" />

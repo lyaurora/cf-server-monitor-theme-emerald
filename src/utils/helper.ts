@@ -45,11 +45,11 @@ const DEFAULT_BYTE_DECIMALS: ByteDecimalsConfig = {
  * @returns 格式化后的字符串，如 "1.5 GB"
  */
 export function formatBytes(bytes: number, decimals = 1): string {
-  if (bytes === 0)
+  if (!Number.isFinite(bytes) || bytes <= 0)
     return '0 B'
 
   const k = 1024
-  const i = Math.floor(Math.log(bytes) / Math.log(k))
+  const i = Math.min(Math.max(Math.floor(Math.log(bytes) / Math.log(k)), 0), BYTE_UNITS.length - 1)
   const unit = BYTE_UNITS[i] ?? LAST_BYTE_UNIT
   return `${(bytes / k ** i).toFixed(decimals)} ${unit}`
 }
@@ -74,14 +74,14 @@ export function formatBytesWithConfig(bytes: number, config?: ByteDecimalsConfig
 export function formatBytesSplit(bytes: number, config?: ByteDecimalsConfig): { value: string, unit: string } {
   const mergedConfig = { ...DEFAULT_BYTE_DECIMALS, ...config }
 
-  if (bytes === 0) {
+  if (!Number.isFinite(bytes) || bytes <= 0) {
     if (mergedConfig.B === -1)
       return { value: '0', unit: 'KB' }
     return { value: '0', unit: 'B' }
   }
 
   const k = 1024
-  const i = Math.floor(Math.log(bytes) / Math.log(k))
+  const i = Math.min(Math.max(Math.floor(Math.log(bytes) / Math.log(k)), 0), BYTE_UNITS.length - 1)
 
   const unitKey = BYTE_UNITS[i]
   const decimals = (unitKey === 'TB' || unitKey === 'PB') ? mergedConfig.TB : mergedConfig[unitKey as keyof ByteDecimalsConfig]
