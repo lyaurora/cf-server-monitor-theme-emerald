@@ -48,89 +48,273 @@ interface RegionOverride {
 /** 常用简称、繁体中文及地图常见名称补充，弥补 Intl.DisplayNames 的长名称或命名差异 */
 const REGION_OVERRIDES: Record<string, RegionOverride> = {
   AE: { zh: '阿联酋' },
-  AT: { aliases: ['奧地利'] },
-  AU: { aliases: ['澳洲'] },
+  AT: {
+    aliases: ['奧地利'],
+  },
+  AU: {
+    aliases: ['澳洲'],
+  },
   BA: { zh: '波黑' },
-  BE: { aliases: ['比利時'] },
-  BF: { aliases: ['burkina', '布吉納法索'] },
-  BG: { aliases: ['保加利亞'] },
-  BN: { aliases: ['汶萊'] },
-  BO: { aliases: ['玻利維亞'] },
-  BS: { aliases: ['巴哈馬'] },
-  BW: { aliases: ['波札那'] },
-  CD: { en: 'Democratic Republic of Congo', zh: '刚果民主共和国', aliases: ['drc', 'congo', '刚果', '剛果'] },
-  CF: { aliases: ['central african', '中非'] },
-  CG: { en: 'Republic of Congo', zh: '刚果共和国', aliases: ['congo', '刚果', '剛果'] },
-  CI: { en: 'Ivory Coast', zh: '科特迪瓦', aliases: ['象牙海岸'] },
-  CM: { aliases: ['喀麥隆'] },
-  CN: { zh: '中国', aliases: ['china', '中华人民共和国', 'prc'] },
-  CO: { aliases: ['哥倫比亞'] },
-  CR: { aliases: ['哥斯達黎加'] },
-  CZ: { en: 'Czech Republic', zh: '捷克', aliases: ['czech', 'czechia'] },
-  DE: { aliases: ['deutschland', '德國'] },
-  DO: { zh: '多明尼加', aliases: ['dominican', '多米尼加'] },
-  DZ: { aliases: ['阿爾及利亞'] },
-  EC: { aliases: ['厄瓜多爾'] },
-  EE: { aliases: ['愛沙尼亞'] },
-  ET: { aliases: ['埃塞俄比亞'] },
-  FI: { aliases: ['芬蘭'] },
-  FK: { aliases: ['falkland', '福克兰', '福克蘭'] },
-  FR: { aliases: ['法國'] },
-  GB: { aliases: ['uk', 'britain', '英國'] },
-  GF: { aliases: ['法屬圭亞那'] },
-  GH: { aliases: ['迦納'] },
-  GM: { aliases: ['甘比亞'] },
-  GN: { aliases: ['幾內亞'] },
-  GR: { aliases: ['希臘'] },
-  GT: { aliases: ['危地馬拉'] },
-  GW: { aliases: ['幾內亞比索'] },
-  GY: { aliases: ['圭亞那'] },
-  HK: { en: 'Hong Kong', zh: '香港', aliases: ['hongkong'] },
-  HR: { aliases: ['克羅地亞'] },
-  ID: { aliases: ['印尼'] },
-  JM: { aliases: ['牙買加'] },
-  KE: { aliases: ['肯亞'] },
-  KR: { en: 'South Korea', zh: '韩国', aliases: ['korea', '南韩', '韓國'] },
-  LA: { aliases: ['老撾'] },
-  LR: { aliases: ['賴比瑞亞'] },
-  LV: { aliases: ['拉脫維亞'] },
-  LY: { aliases: ['利比亞'] },
-  MK: { aliases: ['macedonia'] },
-  ML: { aliases: ['馬利'] },
-  MM: { en: 'Myanmar', zh: '缅甸', aliases: ['burma', '緬甸'] },
-  MO: { en: 'Macao', zh: '澳门', aliases: ['macau', '澳門'] },
-  MY: { aliases: ['馬來西亞'] },
-  NA: { aliases: ['納米比亞'] },
-  NE: { aliases: ['尼日爾'] },
-  NG: { aliases: ['尼日利亞'] },
-  NL: { aliases: ['holland', '荷蘭'] },
-  PA: { aliases: ['巴拿馬'] },
-  PE: { aliases: ['秘魯'] },
-  PH: { aliases: ['菲律賓'] },
-  PL: { aliases: ['波蘭'] },
+  BE: {
+    aliases: ['比利時'],
+  },
+  BF: {
+    aliases: ['burkina', '布吉納法索'],
+  },
+  BG: {
+    aliases: ['保加利亞'],
+  },
+  BN: {
+    aliases: ['汶萊'],
+  },
+  BO: {
+    aliases: ['玻利維亞'],
+  },
+  BS: {
+    aliases: ['巴哈馬'],
+  },
+  BW: {
+    aliases: ['波札那'],
+  },
+  CD: {
+    en: 'Democratic Republic of Congo',
+    zh: '刚果民主共和国',
+    aliases: ['drc', 'congo', '刚果', '剛果'],
+  },
+  CF: {
+    aliases: ['central african', '中非'],
+  },
+  CG: {
+    en: 'Republic of Congo',
+    zh: '刚果共和国',
+    aliases: ['congo', '刚果', '剛果'],
+  },
+  CI: {
+    en: 'Ivory Coast',
+    zh: '科特迪瓦',
+    aliases: ['象牙海岸'],
+  },
+  CM: {
+    aliases: ['喀麥隆'],
+  },
+  CN: {
+    zh: '中国',
+    aliases: ['china', '中华人民共和国', 'prc'],
+  },
+  CO: {
+    aliases: ['哥倫比亞'],
+  },
+  CR: {
+    aliases: ['哥斯達黎加'],
+  },
+  CZ: {
+    en: 'Czech Republic',
+    zh: '捷克',
+    aliases: ['czech', 'czechia'],
+  },
+  DE: {
+    aliases: ['deutschland', '德國'],
+  },
+  DO: {
+    zh: '多明尼加',
+    aliases: ['dominican', '多米尼加'],
+  },
+  DZ: {
+    aliases: ['阿爾及利亞'],
+  },
+  EC: {
+    aliases: ['厄瓜多爾'],
+  },
+  EE: {
+    aliases: ['愛沙尼亞'],
+  },
+  ET: {
+    aliases: ['埃塞俄比亞'],
+  },
+  FI: {
+    aliases: ['芬蘭'],
+  },
+  FK: {
+    aliases: ['falkland', '福克兰', '福克蘭'],
+  },
+  FR: {
+    aliases: ['法國'],
+  },
+  GB: {
+    aliases: ['uk', 'britain', '英國'],
+  },
+  GF: {
+    aliases: ['法屬圭亞那'],
+  },
+  GH: {
+    aliases: ['迦納'],
+  },
+  GM: {
+    aliases: ['甘比亞'],
+  },
+  GN: {
+    aliases: ['幾內亞'],
+  },
+  GR: {
+    aliases: ['希臘'],
+  },
+  GT: {
+    aliases: ['危地馬拉'],
+  },
+  GW: {
+    aliases: ['幾內亞比索'],
+  },
+  GY: {
+    aliases: ['圭亞那'],
+  },
+  HK: {
+    en: 'Hong Kong',
+    zh: '香港',
+    aliases: ['hongkong'],
+  },
+  HR: {
+    aliases: ['克羅地亞'],
+  },
+  ID: {
+    aliases: ['印尼'],
+  },
+  JM: {
+    aliases: ['牙買加'],
+  },
+  KE: {
+    aliases: ['肯亞'],
+  },
+  KR: {
+    en: 'South Korea',
+    zh: '韩国',
+    aliases: ['korea', '南韩', '韓國'],
+  },
+  LA: {
+    aliases: ['老撾'],
+  },
+  LR: {
+    aliases: ['賴比瑞亞'],
+  },
+  LV: {
+    aliases: ['拉脫維亞'],
+  },
+  LY: {
+    aliases: ['利比亞'],
+  },
+  MK: {
+    aliases: ['macedonia'],
+  },
+  ML: {
+    aliases: ['馬利'],
+  },
+  MM: {
+    en: 'Myanmar',
+    zh: '缅甸',
+    aliases: ['burma', '緬甸'],
+  },
+  MO: {
+    en: 'Macao',
+    zh: '澳门',
+    aliases: ['macau', '澳門'],
+  },
+  MY: {
+    aliases: ['馬來西亞'],
+  },
+  NA: {
+    aliases: ['納米比亞'],
+  },
+  NE: {
+    aliases: ['尼日爾'],
+  },
+  NG: {
+    aliases: ['尼日利亞'],
+  },
+  NL: {
+    aliases: ['holland', '荷蘭'],
+  },
+  PA: {
+    aliases: ['巴拿馬'],
+  },
+  PE: {
+    aliases: ['秘魯'],
+  },
+  PH: {
+    aliases: ['菲律賓'],
+  },
+  PL: {
+    aliases: ['波蘭'],
+  },
   PS: { en: 'Palestine', zh: '巴勒斯坦' },
-  RO: { aliases: ['羅馬尼亞'] },
-  RU: { aliases: ['俄國', '俄国'] },
-  RW: { aliases: ['盧旺達'] },
-  SD: { aliases: ['蘇丹'] },
-  SI: { aliases: ['斯洛文尼亞'] },
-  SN: { aliases: ['塞內加爾'] },
-  SR: { aliases: ['蘇里南'] },
-  SS: { aliases: ['南蘇丹'] },
-  SV: { aliases: ['薩爾瓦多'] },
-  SZ: { aliases: ['swaziland'] },
-  TH: { aliases: ['泰國'] },
-  TT: { aliases: ['trinidad', '特立尼达', '特立尼達'] },
-  TR: { en: 'Turkey', zh: '土耳其', aliases: ['türkiye', 'turkiye'] },
-  TW: { en: 'Taiwan', zh: '台湾', aliases: ['台灣'] },
-  TZ: { aliases: ['坦尚尼亞'] },
-  UG: { aliases: ['烏干達'] },
-  US: { en: 'United States', zh: '美国', aliases: ['usa', 'america', '美利坚', '美國'] },
-  UY: { aliases: ['烏拉圭'] },
+  RO: {
+    aliases: ['羅馬尼亞'],
+  },
+  RU: {
+    aliases: ['俄國', '俄国'],
+  },
+  RW: {
+    aliases: ['盧旺達'],
+  },
+  SD: {
+    aliases: ['蘇丹'],
+  },
+  SI: {
+    aliases: ['斯洛文尼亞'],
+  },
+  SN: {
+    aliases: ['塞內加爾'],
+  },
+  SR: {
+    aliases: ['蘇里南'],
+  },
+  SS: {
+    aliases: ['南蘇丹'],
+  },
+  SV: {
+    aliases: ['薩爾瓦多'],
+  },
+  SZ: {
+    aliases: ['swaziland'],
+  },
+  TH: {
+    aliases: ['泰國'],
+  },
+  TT: {
+    aliases: ['trinidad', '特立尼达', '特立尼達'],
+  },
+  TR: {
+    en: 'Turkey',
+    zh: '土耳其',
+    aliases: ['türkiye', 'turkiye'],
+  },
+  TW: {
+    en: 'Taiwan',
+    zh: '台湾',
+    aliases: ['台灣'],
+  },
+  TZ: {
+    aliases: ['坦尚尼亞'],
+  },
+  UG: {
+    aliases: ['烏干達'],
+  },
+  US: {
+    en: 'United States',
+    zh: '美国',
+    aliases: ['usa', 'america', '美利坚', '美國'],
+  },
+  UY: {
+    aliases: ['烏拉圭'],
+  },
   VA: { en: 'Vatican City', zh: '梵蒂冈' },
-  VE: { aliases: ['委內瑞拉'] },
-  ZM: { aliases: ['尚比亞'] },
-  ZW: { aliases: ['辛巴威'] },
+  VE: {
+    aliases: ['委內瑞拉'],
+  },
+  ZM: {
+    aliases: ['尚比亞'],
+  },
+  ZW: {
+    aliases: ['辛巴威'],
+  },
 }
 
 const zhDisplayNames = typeof Intl.DisplayNames === 'function'
@@ -241,7 +425,9 @@ export function isRegionMatch(region: string, searchTerm: string): boolean {
   }
 
   const code = parseRegionCode(region)
-  const regionInfo = code ? resolveRegionInfo(code) : null
+  const regionInfo = code
+    ? resolveRegionInfo(code)
+    : null
   if (!regionInfo)
     return false
 
@@ -259,11 +445,15 @@ export function isRegionMatch(region: string, searchTerm: string): boolean {
  */
 export function getRegionDisplayName(region: string, language: 'en' | 'zh' = 'zh'): string {
   const code = parseRegionCode(region)
-  const regionInfo = code ? resolveRegionInfo(code) : null
+  const regionInfo = code
+    ? resolveRegionInfo(code)
+    : null
   if (!regionInfo)
     return region
 
-  return language === 'zh' ? regionInfo.zh : regionInfo.en
+  return language === 'zh'
+    ? regionInfo.zh
+    : regionInfo.en
 }
 
 /**

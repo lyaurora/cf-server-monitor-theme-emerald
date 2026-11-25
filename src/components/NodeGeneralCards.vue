@@ -155,11 +155,13 @@ const financeSummaryItems = computed(() => [
     symbol: formattedMonthlyAverageCost.value.symbol,
   },
   ...(remainingValueNodes.value.length > 0
-    ? [{
-        label: '剩余价值',
-        value: formattedRemainingValue.value.value,
-        symbol: formattedRemainingValue.value.symbol,
-      }]
+    ? [
+        {
+          label: '剩余价值',
+          value: formattedRemainingValue.value.value,
+          symbol: formattedRemainingValue.value.symbol,
+        },
+      ]
     : []),
 ])
 const financeHeadline = computed(() => remainingValueNodes.value.length ? formattedRemainingValue.value : formattedMonthlyAverageCost.value)
@@ -186,7 +188,9 @@ const wrapperClass = computed(() => showVisualPanel.value
   : 'p-4 grid grid-cols-1 gap-2 h-auto')
 const cardGridClass = computed(() => {
   if (showVisualPanel.value) {
-    const colsClass = visibleCardCount.value <= 4 ? 'grid-cols-2' : 'grid-cols-3'
+    const colsClass = visibleCardCount.value <= 4
+      ? 'grid-cols-2'
+      : 'grid-cols-3'
     return `h-42 -mt-42 md:mt-0 col-span-12 row-start-3 z-9 md:h-auto md:col-span-6 md:row-start-1 grid ${colsClass} grid-rows-2 grid-flow-col gap-2`
   }
   const desktopCols = visibleCardCount.value === 6
@@ -194,7 +198,9 @@ const cardGridClass = computed(() => {
     : visibleCardCount.value === 5
       ? 'md:grid-cols-5'
       : 'md:grid-cols-4'
-  const mobileCols = visibleCardCount.value <= 4 ? 'grid-cols-2' : 'grid-cols-3'
+  const mobileCols = visibleCardCount.value <= 4
+    ? 'grid-cols-2'
+    : 'grid-cols-3'
   return `col-span-1 grid ${mobileCols} ${desktopCols} gap-2`
 })
 const cardSizingClass = computed(() => showVisualPanel.value ? '' : 'min-h-18 md:min-h-24')

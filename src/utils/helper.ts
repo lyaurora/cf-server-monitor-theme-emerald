@@ -72,7 +72,10 @@ export function formatBytesWithConfig(bytes: number, config?: ByteDecimalsConfig
  * @returns 分离的数值和单位，如 { value: "1.5", unit: "GB" }
  */
 export function formatBytesSplit(bytes: number, config?: ByteDecimalsConfig): { value: string, unit: string } {
-  const mergedConfig = { ...DEFAULT_BYTE_DECIMALS, ...config }
+  const mergedConfig = {
+    ...DEFAULT_BYTE_DECIMALS,
+    ...config,
+  }
 
   if (!Number.isFinite(bytes) || bytes <= 0) {
     if (mergedConfig.B === -1)
@@ -84,23 +87,36 @@ export function formatBytesSplit(bytes: number, config?: ByteDecimalsConfig): { 
   const i = Math.min(Math.max(Math.floor(Math.log(bytes) / Math.log(k)), 0), BYTE_UNITS.length - 1)
 
   const unitKey = BYTE_UNITS[i]
-  const decimals = (unitKey === 'TB' || unitKey === 'PB') ? mergedConfig.TB : mergedConfig[unitKey as keyof ByteDecimalsConfig]
+  const decimals = (unitKey === 'TB' || unitKey === 'PB')
+    ? mergedConfig.TB
+    : mergedConfig[unitKey as keyof ByteDecimalsConfig]
 
   if (decimals === -1) {
     for (let j = i + 1; j < BYTE_UNITS.length; j++) {
       const nextUnitKey = BYTE_UNITS[j]
-      const nextDecimals = (nextUnitKey === 'TB' || nextUnitKey === 'PB') ? mergedConfig.TB : mergedConfig[nextUnitKey as keyof ByteDecimalsConfig]
+      const nextDecimals = (nextUnitKey === 'TB' || nextUnitKey === 'PB')
+        ? mergedConfig.TB
+        : mergedConfig[nextUnitKey as keyof ByteDecimalsConfig]
       if (nextDecimals !== -1) {
         const unit = BYTE_UNITS[j]
-        return { value: (bytes / k ** j).toFixed(nextDecimals), unit: `${unit}` }
+        return {
+          value: (bytes / k ** j).toFixed(nextDecimals),
+          unit: `${unit}`,
+        }
       }
     }
     const unit = BYTE_UNITS[i] ?? LAST_BYTE_UNIT
-    return { value: (bytes / k ** i).toFixed(1), unit: `${unit}` }
+    return {
+      value: (bytes / k ** i).toFixed(1),
+      unit: `${unit}`,
+    }
   }
 
   const unit = BYTE_UNITS[i] ?? LAST_BYTE_UNIT
-  return { value: (bytes / k ** i).toFixed(decimals), unit: `${unit}` }
+  return {
+    value: (bytes / k ** i).toFixed(decimals),
+    unit: `${unit}`,
+  }
 }
 
 /**

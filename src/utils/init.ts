@@ -49,23 +49,74 @@ interface LiveSample {
 
 // Status field -> sample keys; carried over from the previous status when the sample omits them.
 const LIVE_STATUS_FIELDS: Array<[keyof NodeStatus & keyof NodeData, string[]]> = [
-  ['cpu', ['cpu']],
-  ['ram', ['ram_used']],
-  ['net_in', ['net_in_speed', 'net_in']],
-  ['net_out', ['net_out_speed', 'net_out']],
-  ['net_total_up', ['net_tx', 'net_total_up']],
-  ['net_total_down', ['net_rx', 'net_total_down']],
-  ['net_monthly_up', ['net_tx_monthly']],
-  ['net_monthly_down', ['net_rx_monthly']],
-  ['swap_total', ['swap_total']],
-  ['swap', ['swap_used']],
-  ['disk_total', ['disk_total']],
-  ['disk', ['disk_used']],
-  ['process', ['processes']],
-  ['connections', ['tcp_conn']],
-  ['connections_udp', ['udp_conn']],
-  ['gpu', ['gpu']],
-  ['temp', ['temp']],
+  [
+    'cpu',
+    ['cpu'],
+  ],
+  [
+    'ram',
+    ['ram_used'],
+  ],
+  [
+    'net_in',
+    ['net_in_speed', 'net_in'],
+  ],
+  [
+    'net_out',
+    ['net_out_speed', 'net_out'],
+  ],
+  [
+    'net_total_up',
+    ['net_tx', 'net_total_up'],
+  ],
+  [
+    'net_total_down',
+    ['net_rx', 'net_total_down'],
+  ],
+  [
+    'net_monthly_up',
+    ['net_tx_monthly'],
+  ],
+  [
+    'net_monthly_down',
+    ['net_rx_monthly'],
+  ],
+  [
+    'swap_total',
+    ['swap_total'],
+  ],
+  [
+    'swap',
+    ['swap_used'],
+  ],
+  [
+    'disk_total',
+    ['disk_total'],
+  ],
+  [
+    'disk',
+    ['disk_used'],
+  ],
+  [
+    'process',
+    ['processes'],
+  ],
+  [
+    'connections',
+    ['tcp_conn'],
+  ],
+  [
+    'connections_udp',
+    ['udp_conn'],
+  ],
+  [
+    'gpu',
+    ['gpu'],
+  ],
+  [
+    'temp',
+    ['temp'],
+  ],
 ]
 
 function sampleHasField(data: Record<string, unknown>, ...keys: string[]): boolean {
@@ -92,7 +143,9 @@ class InitManager {
 
   private get activeUuid(): string | null {
     const route = router.currentRoute.value
-    return route.name === 'instance-detail' ? String(route.params.id) : null
+    return route.name === 'instance-detail'
+      ? String(route.params.id)
+      : null
   }
 
   async init(): Promise<void> {
@@ -209,7 +262,9 @@ class InitManager {
         }
         else {
           this.nodesStore.clearNodes()
-          this.nodesStore.pageError = error.code === 404 ? 'not-found' : 'forbidden'
+          this.nodesStore.pageError = error.code === 404
+            ? 'not-found'
+            : 'forbidden'
         }
         this.clearConnectionNotice()
         // Missing nodes already have an empty state; access failures need an action.
@@ -253,8 +308,11 @@ class InitManager {
         if (!sampleHasField(sample.data, ...keys))
           Object.assign(status, { [field]: current[field] })
       }
-      if (!sampleHasField(sample.data, 'ram_total'))
-        status.ram_total = 'ram_total' in current ? current.ram_total : current.mem_total
+      if (!sampleHasField(sample.data, 'ram_total')) {
+        status.ram_total = 'ram_total' in current
+          ? current.ram_total
+          : current.mem_total
+      }
       if (!sampleHasField(sample.data, 'load_avg')) {
         status.load = current.load
         status.load5 = current.load5
@@ -275,7 +333,9 @@ class InitManager {
   }
 
   private applyBatch(message: WsMessage, serverId: string | null = null): void {
-    for (const update of Array.isArray(message.updates) ? message.updates : []) {
+    for (const update of Array.isArray(message.updates)
+      ? message.updates
+      : []) {
       if (!update || typeof update.serverId !== 'string')
         continue
       if (serverId && update.serverId !== serverId)
@@ -283,17 +343,21 @@ class InitManager {
       const uuid = update.serverId
       if (!this.nodesStore.nodesByUuid.has(uuid))
         continue
-      const samples = (Array.isArray(update.samples) ? update.samples : []).flatMap((sample) => {
+      const samples = (Array.isArray(update.samples)
+        ? update.samples
+        : []).flatMap((sample) => {
         if (!sample)
           return []
         const data = sample.data ?? sample.payload ?? sample.metrics
         if (!data || typeof data !== 'object' || Array.isArray(data))
           return []
-        return [{
-          serverId: update.serverId,
-          ts: timestamp(sample.ts ?? sample.timestamp ?? data.sample_timestamp ?? data.last_updated ?? data.timestamp ?? message.ts),
-          data,
-        }]
+        return [
+          {
+            serverId: update.serverId,
+            ts: timestamp(sample.ts ?? sample.timestamp ?? data.sample_timestamp ?? data.last_updated ?? data.timestamp ?? message.ts),
+            data,
+          },
+        ]
       }).sort((a, b) => a.ts - b.ts)
       for (const sample of samples)
         this.applyLiveSample(sample)
@@ -305,7 +369,9 @@ class InitManager {
       return
     const url = new URL('/api/ws', window.location.origin)
     url.searchParams.set('subscribe', serverId ?? 'all')
-    url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
+    url.protocol = url.protocol === 'https:'
+      ? 'wss:'
+      : 'ws:'
     const socket = new WebSocket(url)
     this.socket = socket
     const isCurrent = () => !this.destroyed && revision === this.revision && this.socket === socket
@@ -330,7 +396,9 @@ class InitManager {
       socket.send(JSON.stringify({
         type: 'subscribe',
         scope: serverId ?? 'all',
-        ids: serverId ? [serverId] : this.nodesStore.nodes.map(node => node.uuid),
+        ids: serverId
+          ? [serverId]
+          : this.nodesStore.nodes.map(node => node.uuid),
       }))
     })
     socket.addEventListener('message', (event) => {
@@ -394,7 +462,10 @@ class InitManager {
       class: 'connection-notice',
       richColors: false,
       duration: Number.POSITIVE_INFINITY,
-      action: { label: '刷新页面', onClick: () => window.location.reload() },
+      action: {
+        label: '刷新页面',
+        onClick: () => window.location.reload(),
+      },
     })
   }
 
@@ -417,7 +488,9 @@ class InitManager {
       return
     }
 
-    const hiddenDuration = this.hiddenAt !== null ? performance.now() - this.hiddenAt : 0
+    const hiddenDuration = this.hiddenAt !== null
+      ? performance.now() - this.hiddenAt
+      : 0
     this.hiddenAt = null
 
     // If a backoff timer is waiting, reconnect right away instead of sitting idle up to 30s.

@@ -79,9 +79,13 @@ export function useNodePingDisplay(
     let pointIndex = 0
     for (let index = 0; index < barCount; index++) {
       const segmentStart = firstTime + index * segmentSize
-      const segmentEnd = index === barCount - 1 ? lastTime + 1 : segmentStart + segmentSize
+      const segmentEnd = index === barCount - 1
+        ? lastTime + 1
+        : segmentStart + segmentSize
       // The preceding sample may still cover the beginning of this segment.
-      const segmentPoints = pointIndex > 0 ? [points[pointIndex - 1]!] : []
+      const segmentPoints = pointIndex > 0
+        ? [points[pointIndex - 1]!]
+        : []
       while (pointIndex < points.length) {
         const point = points[pointIndex]!
         const time = point.timeMs
@@ -101,7 +105,11 @@ export function useNodePingDisplay(
           : metric === 'latency'
             ? getLatencyToneClass(value)
             : getLossToneClass(value),
-        tooltip: `${timeRange} · ${value === null ? 'N/A' : metric === 'latency' ? `${Math.round(value)} ms` : `${Number(value.toFixed(1))}%`}`,
+        tooltip: `${timeRange} · ${value === null
+          ? 'N/A'
+          : metric === 'latency'
+            ? `${Math.round(value)} ms`
+            : `${Number(value.toFixed(1))}%`}`,
       })
     }
 
@@ -132,10 +140,14 @@ export function useNodePingDisplay(
     const latest = latestPing.value
     if (latest && (latest.latest < 0 || latest.loss === 100))
       return '超时'
-    return latestLatency.value !== null ? `${Math.round(latestLatency.value)} ms` : '--'
+    return latestLatency.value !== null
+      ? `${Math.round(latestLatency.value)} ms`
+      : '--'
   })
 
-  const lossDisplay = computed(() => avgLoss.value === null ? '--' : `${avgLoss.value.toFixed(1)}%`)
+  const lossDisplay = computed(() => avgLoss.value === null
+    ? '--'
+    : `${avgLoss.value.toFixed(1)}%`)
 
   return {
     latencyRenderBars,

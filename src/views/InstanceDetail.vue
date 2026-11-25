@@ -29,7 +29,9 @@ function parseGpuInfo(raw: string | undefined): GpuInfo[] {
     return []
   try {
     const parsed = JSON.parse(raw)
-    return Array.isArray(parsed) ? parsed : []
+    return Array.isArray(parsed)
+      ? parsed
+      : []
   }
   catch {
     return []
@@ -134,8 +136,11 @@ const nodePriceText = computed(() => {
     return '-'
   if (data.value.price_configured === false)
     return '-'
-  if (Number(data.value.price) <= 0)
-    return appStore.lang === 'zh-CN' ? '免费' : 'Free'
+  if (Number(data.value.price) <= 0) {
+    return appStore.lang === 'zh-CN'
+      ? '免费'
+      : 'Free'
+  }
 
   // Show the configured price in the API currency (e.g. ¥JPY0.5), not the finance base.
   return `${formatPrice(data.value.price, data.value.currency, appStore.lang)} / ${getBillingCycleText(data.value.billing_cycle, appStore.lang)}`
@@ -144,13 +149,22 @@ const nodePriceText = computed(() => {
 const monthlyAverageCostText = computed(() => {
   if (!data.value)
     return '-'
-  if (data.value.price_configured === false)
-    return appStore.lang === 'zh-CN' ? '不适用' : 'N/A'
-  if (Number(data.value.price) <= 0)
-    return appStore.lang === 'zh-CN' ? '免费' : 'Free'
+  if (data.value.price_configured === false) {
+    return appStore.lang === 'zh-CN'
+      ? '不适用'
+      : 'N/A'
+  }
+  if (Number(data.value.price) <= 0) {
+    return appStore.lang === 'zh-CN'
+      ? '免费'
+      : 'Free'
+  }
 
-  if (Number(data.value.billing_cycle) <= 0)
-    return appStore.lang === 'zh-CN' ? '不适用' : 'N/A'
+  if (Number(data.value.billing_cycle) <= 0) {
+    return appStore.lang === 'zh-CN'
+      ? '不适用'
+      : 'N/A'
+  }
 
   const monthlyAverageCost = financeHelper.calculateMonthlyAverageCostCNY(data.value, exchangeRates.value)
   return `${formatFinanceMetricValue(monthlyAverageCost, financeBaseCurrency.value)} / 月`
@@ -232,14 +246,22 @@ const gpuDisplayText = computed(() => {
     let text = g.name || `GPU #${g.id ?? ''}`
     if (g.info !== undefined && g.info !== null && g.info !== '') {
       const pct = Number.parseFloat(String(g.info))
-      text += ` (${Number.isFinite(pct) ? `${pct.toFixed(1)}%` : g.info})`
+      text += ` (${Number.isFinite(pct)
+        ? `${pct.toFixed(1)}%`
+        : g.info})`
     }
     return text
   }).join(' | ')
 })
 
 const hardwareInfo = computed<InfoItem[]>(() => [
-  { label: 'CPU', value: data.value ? `${data.value.cpu_name} (x${data.value.cpu_cores})` : '-', icon: 'icon-park-outline:cpu' },
+  {
+    label: 'CPU',
+    value: data.value
+      ? `${data.value.cpu_name} (x${data.value.cpu_cores})`
+      : '-',
+    icon: 'icon-park-outline:cpu',
+  },
   { label: '架构', value: data.value?.arch ?? '-', icon: 'icon-park-outline:application-two' },
   { label: '内核', value: data.value?.kernel_version ?? '-', icon: 'icon-park-outline:server' },
   { label: 'GPU', value: gpuDisplayText.value, icon: 'icon-park-outline:video-one' },
@@ -247,20 +269,52 @@ const hardwareInfo = computed<InfoItem[]>(() => [
 
 const systemInfo = computed<InfoItem[]>(() => [
   { label: '操作系统', value: data.value?.os ?? '-', icon: 'icon-park-outline:computer' },
-  { label: '启动时间', value: formatDateTime(data.value?.boot_time), icon: 'icon-park-outline:time' },
-  { label: '运行时间', value: formatUptime(data.value?.uptime ?? 0), icon: 'icon-park-outline:timer' },
-  { label: '最后上报', value: formatDateTime(data.value?.time), icon: 'icon-park-outline:time' },
+  {
+    label: '启动时间',
+    value: formatDateTime(data.value?.boot_time),
+    icon: 'icon-park-outline:time',
+  },
+  {
+    label: '运行时间',
+    value: formatUptime(data.value?.uptime ?? 0),
+    icon: 'icon-park-outline:timer',
+  },
+  {
+    label: '最后上报',
+    value: formatDateTime(data.value?.time),
+    icon: 'icon-park-outline:time',
+  },
 ])
 
 const storageInfo = computed<InfoItem[]>(() => [
-  { label: '内存', value: formatBytes(data.value?.mem_total ?? 0), icon: 'icon-park-outline:memory' },
-  { label: '内存交换', value: data.value?.swap_total != null ? formatBytes(data.value.swap_total) : '-', icon: 'icon-park-outline:switch' },
-  { label: '硬盘', value: formatBytes(data.value?.disk_total ?? 0), icon: 'icon-park-outline:hard-disk' },
+  {
+    label: '内存',
+    value: formatBytes(data.value?.mem_total ?? 0),
+    icon: 'icon-park-outline:memory',
+  },
+  {
+    label: '内存交换',
+    value: data.value?.swap_total != null
+      ? formatBytes(data.value.swap_total)
+      : '-',
+    icon: 'icon-park-outline:switch',
+  },
+  {
+    label: '硬盘',
+    value: formatBytes(data.value?.disk_total ?? 0),
+    icon: 'icon-park-outline:hard-disk',
+  },
 ])
 
-const trafficUsed = computed(() => data.value ? getTrafficUsed(data.value) : 0)
-const hasTrafficLimit = computed(() => data.value ? showTrafficProgress(data.value) : false)
-const trafficUsedPercentage = computed(() => data.value ? getTrafficUsedPercentage(data.value) : 0)
+const trafficUsed = computed(() => data.value
+  ? getTrafficUsed(data.value)
+  : 0)
+const hasTrafficLimit = computed(() => data.value
+  ? showTrafficProgress(data.value)
+  : false)
+const trafficUsedPercentage = computed(() => data.value
+  ? getTrafficUsedPercentage(data.value)
+  : 0)
 
 const trafficUsageText = computed(() => {
   if (!hasTrafficLimit.value)

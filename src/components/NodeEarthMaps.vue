@@ -121,7 +121,9 @@ const scatterData = computed(() => points.value.map(point => ({
   value: [point.coord[1], point.coord[0], point.total],
   online: point.online,
   offline: point.offline,
-  symbolSize: point.total <= 1 ? 8 : 14,
+  symbolSize: point.total <= 1
+    ? 8
+    : 14,
   label: { show: point.total > 1 },
   itemStyle: {
     color: point.offline > 0
@@ -153,7 +155,9 @@ const chartOption = computed<EChartsOption>(() => ({
       const flag = `<img src="${getApiAssetUrl(`flags/${p.data.code.toLowerCase()}.svg`)}" style="width:16px;height:16px;vertical-align:middle;margin-right:2px;filter:drop-shadow(0 0 2px rgba(0,0,0,0.1))" />`
       const dot = (color: string) => `<span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:${color}"></span>`
       const online = `<span style="display:flex;gap:4px;align-items:center">${dot(chartThemeColors.value.dotEmerald)} ${p.data.online}</span>`
-      const offline = p.data.offline > 0 ? ` <span style="display:flex;gap:4px;align-items:center">${dot(chartThemeColors.value.dotYellow)} ${p.data.offline}</span>` : ''
+      const offline = p.data.offline > 0
+        ? ` <span style="display:flex;gap:4px;align-items:center">${dot(chartThemeColors.value.dotYellow)} ${p.data.offline}</span>`
+        : ''
       return `<div style="line-height:1.4"><span style="display:flex;gap:2px;align-items:center;">${flag}${escapeHtml(p.name)}</span><div style="display:flex;gap:8px;align-items:center;color:${chartThemeColors.value.textSecondary}">${online}${offline}</div></div>`
     },
   },
@@ -218,7 +222,9 @@ const chartOption = computed<EChartsOption>(() => ({
         color: '#ffffff',
         formatter: (params: unknown) => {
           const p = params as { value: Array<number | string> }
-          const total = typeof p.value?.[2] === 'number' ? p.value[2] : 0
+          const total = typeof p.value?.[2] === 'number'
+            ? p.value[2]
+            : 0
           return String(total)
         },
       },
@@ -237,7 +243,9 @@ onMounted(async () => {
     mapName.value = await ensureWorldMapRegistered()
   }
   catch (error) {
-    loadError.value = error instanceof Error ? error.message : '地图资源加载失败'
+    loadError.value = error instanceof Error
+      ? error.message
+      : '地图资源加载失败'
   }
   finally {
     loading.value = false

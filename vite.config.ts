@@ -34,11 +34,18 @@ function normalizeOrigin(value: string): string | null {
   }
 }
 
+const ECHARTS_CHUNK_RE = /[/\\]node_modules[/\\](?:echarts|zrender|vue-echarts)[/\\]/
+const REKA_UI_CHUNK_RE = /[/\\]node_modules[/\\]reka-ui[/\\]/
+const VUEUSE_CHUNK_RE = /[/\\]node_modules[/\\]@vueuse[/\\]/
+const VUE_VENDOR_CHUNK_RE = /[/\\]node_modules[/\\](?:vue|@vue|vue-router|pinia)[/\\]/
+
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
   const apiBases = splitList(env.API_BASE).map(normalizeOrigin).filter((value): value is string => Boolean(value))
   const outboundProxy = env.HTTPS_PROXY || env.HTTP_PROXY
-  const outboundProxyAgent = outboundProxy ? new HttpsProxyAgent(outboundProxy) : undefined
+  const outboundProxyAgent = outboundProxy
+    ? new HttpsProxyAgent(outboundProxy)
+    : undefined
 
   return {
     base: env.BASE_PATH || './',
@@ -81,27 +88,31 @@ export default defineConfig(({ mode }) => {
     },
     build: {
       chunkSizeWarningLimit: 700,
-      rollupOptions: {
+      rolldownOptions: {
         output: {
-          manualChunks(id) {
-            if (!id.includes('node_modules'))
-              return undefined
-            if (id.includes('/node_modules/echarts/')
-              || id.includes('/node_modules/zrender/')
-              || id.includes('/node_modules/vue-echarts/')) {
-              return 'echarts'
-            }
-            if (id.includes('/node_modules/reka-ui/'))
-              return 'reka-ui'
-            if (id.includes('/node_modules/@vueuse/'))
-              return 'vueuse'
-            if (id.includes('/node_modules/vue/')
-              || id.includes('/node_modules/@vue/')
-              || id.includes('/node_modules/vue-router/')
-              || id.includes('/node_modules/pinia/')) {
-              return 'vue-vendor'
-            }
-            return undefined
+          codeSplitting: {
+            groups: [
+              {
+                name: 'vue-vendor',
+                test: VUE_VENDOR_CHUNK_RE,
+                priority: 40,
+              },
+              {
+                name: 'vueuse',
+                test: VUEUSE_CHUNK_RE,
+                priority: 30,
+              },
+              {
+                name: 'reka-ui',
+                test: REKA_UI_CHUNK_RE,
+                priority: 20,
+              },
+              {
+                name: 'echarts',
+                test: ECHARTS_CHUNK_RE,
+                priority: 10,
+              },
+            ],
           },
         },
       },

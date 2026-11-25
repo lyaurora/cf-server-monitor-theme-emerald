@@ -52,9 +52,15 @@ const visitTime = ref(formatVisitTime(new Date()))
 const flagVisible = ref(true)
 const expand = ref(false)
 
-const subtitle = computed(() => loading.value ? '检测中' : location.value || '网络访客')
-const flagSrc = computed(() => countryCode.value ? getApiAssetUrl(`flags/${countryCode.value.toLowerCase()}.svg`) : '')
-const displayIp = computed(() => expand.value ? ip.value : maskIpForCollapsedState(ip.value))
+const subtitle = computed(() => loading.value
+  ? '检测中'
+  : location.value || '网络访客')
+const flagSrc = computed(() => countryCode.value
+  ? getApiAssetUrl(`flags/${countryCode.value.toLowerCase()}.svg`)
+  : '')
+const displayIp = computed(() => expand.value
+  ? ip.value
+  : maskIpForCollapsedState(ip.value))
 
 const visitorRows = computed<VisitorInfoRow[]>(() => [
   {
@@ -126,8 +132,12 @@ function maskIpv4Address(value: string): string | null {
 
 function maskIpv6Address(value: string): string | null {
   const percentIndex = value.indexOf('%')
-  const address = percentIndex >= 0 ? value.slice(0, percentIndex) : value
-  const scope = percentIndex >= 0 ? value.slice(percentIndex + 1) : ''
+  const address = percentIndex >= 0
+    ? value.slice(0, percentIndex)
+    : value
+  const scope = percentIndex >= 0
+    ? value.slice(percentIndex + 1)
+    : ''
   if (!address.includes(':') || address.includes(':::')) {
     return null
   }
@@ -145,14 +155,20 @@ function maskIpv6Address(value: string): string | null {
   let maskedAddress = address
   if (address.includes('::')) {
     const [prefix = ''] = address.split('::')
-    const visibleSegments = prefix ? prefix.split(':').filter(Boolean).slice(0, 4) : []
-    maskedAddress = visibleSegments.length > 0 ? `${visibleSegments.join(':')}::*` : '::*'
+    const visibleSegments = prefix
+      ? prefix.split(':').filter(Boolean).slice(0, 4)
+      : []
+    maskedAddress = visibleSegments.length > 0
+      ? `${visibleSegments.join(':')}::*`
+      : '::*'
   }
   else if (segments.length > 4) {
     maskedAddress = `${segments.slice(0, 4).join(':')}:*`
   }
 
-  return scope ? `${maskedAddress}%${scope}` : maskedAddress
+  return scope
+    ? `${maskedAddress}%${scope}`
+    : maskedAddress
 }
 
 function isValidIpv6Segment(segment: string, index: number, segments: string[]): boolean {
@@ -167,7 +183,9 @@ function isValidIpv6Segment(segment: string, index: number, segments: string[]):
 
 function normalizeCountryCode(value: string | undefined): string {
   const code = value?.trim().toUpperCase() ?? ''
-  return ISO_COUNTRY_CODE_REGEX.test(code) ? code : ''
+  return ISO_COUNTRY_CODE_REGEX.test(code)
+    ? code
+    : ''
 }
 
 function detectClient(): VisitorClientData {

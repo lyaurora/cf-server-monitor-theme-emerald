@@ -100,10 +100,16 @@ export function getPriceTags(node: NodeData, lang: 'zh-CN' | 'en-US', now = Date
     tags.push({ text: priceText })
   if (node.showExpire === false || !node.expired_at)
     return tags
-  if (status === 'long_term')
-    tags.push({ text: lang === 'zh-CN' ? '长期' : 'Long-term' })
-  else
+  if (status === 'long_term') {
+    tags.push({
+      text: lang === 'zh-CN'
+        ? '长期'
+        : 'Long-term',
+    })
+  }
+  else {
     tags.push({ text: remainingDays, highlightValue: remainingDays })
+  }
   return tags
 }
 

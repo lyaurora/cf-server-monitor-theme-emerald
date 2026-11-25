@@ -137,7 +137,9 @@ function resolveCountryCode(name: string, aliasToCodeMap: Map<string, string>): 
 function normalizeWorldGeoJson(worldGeoJson: WorldGeoJson): WorldGeoJson {
   const aliasToCodeMap = getRegionAliasToCodeMap()
   for (const feature of worldGeoJson.features) {
-    const name = typeof feature.properties?.name === 'string' ? feature.properties.name : ''
+    const name = typeof feature.properties?.name === 'string'
+      ? feature.properties.name
+      : ''
     const code = resolveCountryCode(name, aliasToCodeMap)
     if (!code)
       continue

@@ -71,7 +71,9 @@ const barLayout = computed(() => {
 })
 
 function getPanelTooltip(panelName: string, bars: typeof latencyRenderBars.value): string | undefined {
-  const index = hoveredBar.value?.panel === panelName ? hoveredBar.value.index : bars.length - 1
+  const index = hoveredBar.value?.panel === panelName
+    ? hoveredBar.value.index
+    : bars.length - 1
   return bars[index]?.tooltip
 }
 
@@ -80,7 +82,9 @@ async function selectLine(key: string) {
     await appStore.updateNodePingLines(props.node.uuid, props.index, key, Object.keys(props.node.ping ?? {}))
   }
   catch (error) {
-    message.error(error instanceof Error ? error.message : '线路保存失败，请重试')
+    message.error(error instanceof Error
+      ? error.message
+      : '线路保存失败，请重试')
   }
 }
 </script>

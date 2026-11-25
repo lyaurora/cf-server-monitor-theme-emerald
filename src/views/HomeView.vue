@@ -116,7 +116,11 @@ const nodeList = computed(() => {
   if (!appStore.offlineNodesLast)
     return filtered
   // 稳定排序：在线节点在前、离线节点在后，组内保持原有顺序
-  return [...filtered].sort((a, b) => (a.online === b.online ? 0 : a.online ? -1 : 1))
+  return [...filtered].sort((a, b) => (a.online === b.online
+    ? 0
+    : a.online
+      ? -1
+      : 1))
 })
 
 const selectedPingNode = computed(() => {

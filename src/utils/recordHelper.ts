@@ -79,7 +79,10 @@ export function fillMissingTimePoints<T extends { time?: string, updated_at?: st
     dayjs(item.time ?? item.updated_at ?? '').valueOf()
 
   // 预计算时间戳，避免重复解析
-  const timedData = data.map(item => ({ item, timeMs: getTime(item) }))
+  const timedData = data.map(item => ({
+    item,
+    timeMs: getTime(item),
+  }))
     .filter(point => Number.isFinite(point.timeMs))
   timedData.sort((a, b) => a.timeMs - b.timeMs)
 
@@ -133,11 +136,17 @@ export function fillMissingTimePoints<T extends { time?: string, updated_at?: st
 
     if (found) {
       // 找到则使用，但对齐时间到网格
-      return { ...found, time: dayjs(t).toISOString() }
+      return {
+        ...found,
+        time: dayjs(t).toISOString(),
+      }
     }
 
     // 未找到则插入空值模板
-    return { ...nullTemplate, time: dayjs(t).toISOString() } as T
+    return {
+      ...nullTemplate,
+      time: dayjs(t).toISOString(),
+    } as T
   })
 
   return filled

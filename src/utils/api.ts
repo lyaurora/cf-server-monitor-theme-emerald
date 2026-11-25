@@ -389,13 +389,24 @@ export function normalizePingLinesByNode(value: unknown): Record<string, string[
   return Object.fromEntries(Object.entries(value).flatMap(([uuid, lines]) => {
     if (!Array.isArray(lines))
       return []
-    const valid = [...new Set(lines.filter((key): key is string => typeof key === 'string' && Object.hasOwn(DEFAULT_PING_TASK_NAMES, key)))].slice(0, 3)
-    return valid.length ? [[uuid, valid]] : []
+    const valid = [
+      ...new Set(lines.filter((key): key is string => typeof key === 'string' && Object.hasOwn(DEFAULT_PING_TASK_NAMES, key))),
+    ].slice(0, 3)
+    return valid.length
+      ? [
+          [uuid, valid],
+        ]
+      : []
   }))
 }
 
 export function resolvePingLines(available: string[], saved: string[] = []): string[] {
-  return [...new Set([...saved.filter(key => available.includes(key)), ...available])].slice(0, 3)
+  return [
+    ...new Set([
+      ...saved.filter(key => available.includes(key)),
+      ...available,
+    ]),
+  ].slice(0, 3)
 }
 
 export function switchPingLine(lines: string[], index: number, key: string): string[] {
@@ -422,16 +433,22 @@ function themeBoolean(value: unknown, fallback: boolean): boolean {
 }
 
 function themeString(value: unknown, fallback: string): string {
-  return typeof value === 'string' ? value.trim() : fallback
+  return typeof value === 'string'
+    ? value.trim()
+    : fallback
 }
 
 function themeNumber(value: unknown, fallback: number, min: number, max: number): number {
   const number = Number(value)
-  return Number.isFinite(number) && number >= min && number <= max ? number : fallback
+  return Number.isFinite(number) && number >= min && number <= max
+    ? number
+    : fallback
 }
 
 function themeEnum<T extends string>(value: unknown, fallback: T, values: readonly T[]): T {
-  return typeof value === 'string' && (values as readonly string[]).includes(value) ? value as T : fallback
+  return typeof value === 'string' && (values as readonly string[]).includes(value)
+    ? value as T
+    : fallback
 }
 
 /** Converts the CF Server Monitor `theme_options` wire format to UI-safe values. */
@@ -444,7 +461,13 @@ export function adaptThemeOptions(value: unknown): ThemeSettings {
     alertEnabled: themeBoolean(options.alertEnabled, DEFAULT_THEME_SETTINGS.alertEnabled),
     alertTitle: themeString(options.alertTitle, DEFAULT_THEME_SETTINGS.alertTitle),
     alertContent: themeString(options.alertContent, DEFAULT_THEME_SETTINGS.alertContent),
-    earthViewMode: themeEnum(options.earthViewMode, DEFAULT_THEME_SETTINGS.earthViewMode, ['earth', 'earth-stop', 'maps', 'cards', 'hide']),
+    earthViewMode: themeEnum(options.earthViewMode, DEFAULT_THEME_SETTINGS.earthViewMode, [
+      'earth',
+      'earth-stop',
+      'maps',
+      'cards',
+      'hide',
+    ]),
     visitorInfoCardEnabled: themeBoolean(options.visitorInfoCardEnabled, DEFAULT_THEME_SETTINGS.visitorInfoCardEnabled),
     hideAdminEntryWhenLoggedOut: themeBoolean(options.hideAdminEntryWhenLoggedOut, DEFAULT_THEME_SETTINGS.hideAdminEntryWhenLoggedOut),
     disablePageAnimation: themeBoolean(options.disablePageAnimation, DEFAULT_THEME_SETTINGS.disablePageAnimation),
@@ -466,7 +489,9 @@ export function adaptThemeOptions(value: unknown): ThemeSettings {
 
 function finiteNumber(value: unknown): number {
   const number = Number.parseFloat(String(value ?? 0))
-  return Number.isFinite(number) ? number : 0
+  return Number.isFinite(number)
+    ? number
+    : 0
 }
 
 function parseGpuInfo(raw: unknown): Array<{ id?: number | string, name?: string, info?: string }> {
@@ -477,7 +502,9 @@ function parseGpuInfo(raw: unknown): Array<{ id?: number | string, name?: string
   if (typeof raw === 'string') {
     try {
       const parsed = JSON.parse(raw)
-      return Array.isArray(parsed) ? parsed : []
+      return Array.isArray(parsed)
+        ? parsed
+        : []
     }
     catch { return [] }
   }
@@ -497,7 +524,9 @@ function normalizeGpuInfo(raw: unknown): string {
   if (typeof raw === 'string') {
     if (raw.startsWith('[') || raw.startsWith('{'))
       return raw
-    return JSON.stringify([{ name: raw }])
+    return JSON.stringify([
+      { name: raw },
+    ])
   }
   if (Array.isArray(raw))
     return JSON.stringify(raw)
@@ -519,11 +548,15 @@ export function timestamp(value: unknown, fallback = Date.now()): number {
   const number = finiteNumber(value)
   if (!number)
     return fallback
-  return number < 1e12 ? number * 1000 : number
+  return number < 1e12
+    ? number * 1000
+    : number
 }
 
 export function getApiAssetUrl(path: string): string {
-  const origin = typeof window === 'undefined' ? '' : window.location.origin
+  const origin = typeof window === 'undefined'
+    ? ''
+    : window.location.origin
   return `${origin}/${path.replace(LEADING_SLASHES_REGEX, '')}`
 }
 
@@ -545,9 +578,13 @@ function authHeaders(initialHeaders?: HeadersInit): Headers {
   if (token)
     headers.set('Authorization', `Bearer ${token}`)
 
-  const host = typeof window === 'undefined' ? '' : window.location.hostname
+  const host = typeof window === 'undefined'
+    ? ''
+    : window.location.hostname
   const turnstileToken = getLocalStorageValue('turnstile_token')
-  const verified = (host ? getLocalStorageValue(`turnstile_verified_${host}`) : '') || getLocalStorageValue('turnstile_verified')
+  const verified = (host
+    ? getLocalStorageValue(`turnstile_verified_${host}`)
+    : '') || getLocalStorageValue('turnstile_verified')
   if (turnstileToken)
     headers.set('X-Turnstile-Token', turnstileToken)
   else if (verified)
@@ -574,7 +611,9 @@ function removeLocalStorageValue(key: string): void {
 }
 
 function clearTurnstileSession(): void {
-  const host = typeof window === 'undefined' ? '' : window.location.hostname
+  const host = typeof window === 'undefined'
+    ? ''
+    : window.location.hostname
   if (host)
     removeLocalStorageValue(`turnstile_verified_${host}`)
   removeLocalStorageValue('turnstile_verified')
@@ -582,7 +621,9 @@ function clearTurnstileSession(): void {
 }
 
 function storeTurnstileVerified(verified: string): void {
-  const host = typeof window === 'undefined' ? '' : window.location.hostname
+  const host = typeof window === 'undefined'
+    ? ''
+    : window.location.hostname
   if (host)
     setLocalStorageValue(`turnstile_verified_${host}`, verified)
   setLocalStorageValue('turnstile_verified', verified)
@@ -745,7 +786,9 @@ export async function saveNodePingLines(uuid: string, lines: string[]): Promise<
   const config = await request<SiteConfig>('/api/config')
   if (!config.authorization)
     throw new Error('请先登录站长账号')
-  const existing = isRecord(config.theme_options) ? config.theme_options : {}
+  const existing = isRecord(config.theme_options)
+    ? config.theme_options
+    : {}
   const now = Date.now()
   for (const [key, edit] of savedPingLineEdits) {
     if (now - edit.time >= 150_000)
@@ -754,7 +797,11 @@ export async function saveNodePingLines(uuid: string, lines: string[]): Promise<
   const recentEdits = Object.fromEntries(
     Array.from(savedPingLineEdits, ([key, edit]) => [key, edit.lines]),
   )
-  const pingLinesByNode = { ...adaptThemeOptions(existing).pingLinesByNode, ...recentEdits, [uuid]: lines }
+  const pingLinesByNode = {
+    ...adaptThemeOptions(existing).pingLinesByNode,
+    ...recentEdits,
+    [uuid]: lines,
+  }
   const themeOptions = { ...existing, pingLinesByNode }
   const result = await request<{ success: boolean, message?: string }>('/api/theme_options', {
     method: 'POST',
@@ -763,7 +810,10 @@ export async function saveNodePingLines(uuid: string, lines: string[]): Promise<
   })
   if (!result?.success)
     throw new Error(result?.message || '线路配置保存失败')
-  savedPingLineEdits.set(uuid, { time: Date.now(), lines })
+  savedPingLineEdits.set(uuid, {
+    time: Date.now(),
+    lines,
+  })
   cachedSiteConfig = { ...config, theme_options: themeOptions }
   return normalizePingLinesByNode(pingLinesByNode)
 }
@@ -813,8 +863,11 @@ function parseBillingCycle(value: unknown): number | null {
   if (value === undefined || value === null || value === '')
     return null
 
-  if (typeof value === 'number')
-    return Number.isFinite(value) ? value : null
+  if (typeof value === 'number') {
+    return Number.isFinite(value)
+      ? value
+      : null
+  }
 
   const text = String(value).trim()
   if (!text)
@@ -868,7 +921,9 @@ function normalizeCurrencyField(value: unknown): string | null {
   const upper = raw.toUpperCase()
   return normalizedCurrencyMap[raw]
     ?? normalizedCurrencyMap[upper]
-    ?? (isSupportedCurrency(upper) ? upper : null)
+    ?? (isSupportedCurrency(upper)
+      ? upper
+      : null)
 }
 
 const ISO_CURRENCY_CODE_REGEX = /^[A-Z]{3}$/i
@@ -902,7 +957,9 @@ const LETTER_SYMBOL_MATCHERS = Object.entries(normalizedCurrencyMap)
     code,
     regex: new RegExp(
       `(?:^|[^A-Za-z])${escapeRegexChars(symbol)}(?:$|[^A-Za-z])`,
-      symbol.length > 1 ? 'i' : '',
+      symbol.length > 1
+        ? 'i'
+        : '',
     ),
   }))
 
@@ -972,7 +1029,9 @@ export function adaptServerBilling(server: Pick<CfServer, 'price' | 'billing_cyc
  */
 function resolveDisplayCurrency(server: Pick<CfServer, 'price' | 'currency'>): string {
   const raw = String(server.currency ?? '').trim()
-  const normalized = raw === '￥' ? '¥' : raw
+  const normalized = raw === '￥'
+    ? '¥'
+    : raw
   if (normalized) {
     const upper = normalized.toUpperCase()
     if (normalizeCurrencyField(normalized) || isSupportedCurrency(upper))
@@ -1012,7 +1071,9 @@ function trafficLimitType(value: unknown): TrafficLimitType {
 function pingEntry(name: string, latency: unknown, loss: unknown): NodeStatusPing {
   const lossValue = nullableNumber(loss) ?? Number.NaN
   // Keep explicit timeouts distinct from absent/disabled probe fields.
-  const latest = latency === null || lossValue === 100 ? -1 : nullableNumber(latency) ?? Number.NaN
+  const latest = latency === null || lossValue === 100
+    ? -1
+    : nullableNumber(latency) ?? Number.NaN
   return { name, latest, loss: lossValue }
 }
 
@@ -1024,14 +1085,54 @@ interface PingTaskDefinition {
 }
 
 const PING_TASKS: PingTaskDefinition[] = [
-  { id: 1, key: 'ct', latencyField: 'ping_ct', lossField: 'loss_ct' },
-  { id: 2, key: 'cu', latencyField: 'ping_cu', lossField: 'loss_cu' },
-  { id: 3, key: 'cm', latencyField: 'ping_cm', lossField: 'loss_cm' },
-  { id: 4, key: 'bd', latencyField: 'ping_bd', lossField: 'loss_bd' },
-  { id: 5, key: 'node_1', latencyField: 'ping_node_1', lossField: 'loss_node_1' },
-  { id: 6, key: 'node_2', latencyField: 'ping_node_2', lossField: 'loss_node_2' },
-  { id: 7, key: 'node_3', latencyField: 'ping_node_3', lossField: 'loss_node_3' },
-  { id: 8, key: 'node_4', latencyField: 'ping_node_4', lossField: 'loss_node_4' },
+  {
+    id: 1,
+    key: 'ct',
+    latencyField: 'ping_ct',
+    lossField: 'loss_ct',
+  },
+  {
+    id: 2,
+    key: 'cu',
+    latencyField: 'ping_cu',
+    lossField: 'loss_cu',
+  },
+  {
+    id: 3,
+    key: 'cm',
+    latencyField: 'ping_cm',
+    lossField: 'loss_cm',
+  },
+  {
+    id: 4,
+    key: 'bd',
+    latencyField: 'ping_bd',
+    lossField: 'loss_bd',
+  },
+  {
+    id: 5,
+    key: 'node_1',
+    latencyField: 'ping_node_1',
+    lossField: 'loss_node_1',
+  },
+  {
+    id: 6,
+    key: 'node_2',
+    latencyField: 'ping_node_2',
+    lossField: 'loss_node_2',
+  },
+  {
+    id: 7,
+    key: 'node_3',
+    latencyField: 'ping_node_3',
+    lossField: 'loss_node_3',
+  },
+  {
+    id: 8,
+    key: 'node_4',
+    latencyField: 'ping_node_4',
+    lossField: 'loss_node_4',
+  },
 ]
 
 /**
@@ -1058,8 +1159,11 @@ export function mergeServerPingSample(server: Record<string, unknown>, previous:
     const next = isPingFieldPresent(latency) || isPingFieldPresent(loss)
       ? pingEntry(pingTaskNames[task.key], latency, loss)
       : undefined
-    if (next ? current && Object.entries(next).every(([field, value]) => Object.is(value, current[field as keyof NodeStatusPing])) : !current)
+    if (next
+      ? current && Object.entries(next).every(([field, value]) => Object.is(value, current[field as keyof NodeStatusPing]))
+      : !current) {
       continue
+    }
     if (ping === previous)
       ping = { ...previous }
     if (next)
@@ -1076,12 +1180,16 @@ function nullableNumber(value: unknown): number | null {
   if (String(value).trim() === '')
     return null
   const number = Number(value)
-  return Number.isFinite(number) ? number : null
+  return Number.isFinite(number)
+    ? number
+    : null
 }
 
 function optionalMegabytes(value: unknown): number | null {
   const bytes = (nullableNumber(value) ?? -1) * MB
-  return Number.isFinite(bytes) && bytes >= 0 ? bytes : null
+  return Number.isFinite(bytes) && bytes >= 0
+    ? bytes
+    : null
 }
 
 function buildPingWindowPoint(
@@ -1092,10 +1200,19 @@ function buildPingWindowPoint(
   const lines = Object.fromEntries(PING_TASKS.map(({ key }) => {
     const latency = nullableNumber(pingPoint?.[key])
     const loss = nullableNumber(lossPoint?.[key])
-    return [key, {
-      latency: latency !== null && latency >= 0 && loss !== 100 ? latency : null,
-      loss: loss !== null && loss >= 0 && loss <= 100 ? loss : latency !== null && latency < 0 ? 100 : null,
-    }]
+    return [
+      key,
+      {
+        latency: latency !== null && latency >= 0 && loss !== 100
+          ? latency
+          : null,
+        loss: loss !== null && loss >= 0 && loss <= 100
+          ? loss
+          : latency !== null && latency < 0
+            ? 100
+            : null,
+      },
+    ]
   }))
   return {
     time: new Date(ts).toISOString(),
@@ -1105,17 +1222,29 @@ function buildPingWindowPoint(
 
 /** 将 /api/servers 的 ping/loss 窗口（旧→新）按时间戳对齐聚合成延迟/丢包点 */
 function buildPingWindow(server: CfServer): PingWindowPoint[] | undefined {
-  const ping = Array.isArray(server.ping) ? server.ping : undefined
-  const loss = Array.isArray(server.loss) ? server.loss : undefined
+  const ping = Array.isArray(server.ping)
+    ? server.ping
+    : undefined
+  const loss = Array.isArray(server.loss)
+    ? server.loss
+    : undefined
   if (!ping?.length && !loss?.length)
     return undefined
 
   const byTime = (items: LatencyWindowPoint[]) => new Map(items
-    .map(point => [timestamp(point.ts, 0), point] as const)
+    .map(point => [
+      timestamp(point.ts, 0),
+      point,
+    ] as const)
     .filter(([ts]) => ts > 0 && Number.isFinite(ts)))
   const pingByTs = byTime(ping ?? [])
   const lossByTs = byTime(loss ?? [])
-  const points = [...new Set([...pingByTs.keys(), ...lossByTs.keys()])]
+  const points = [
+    ...new Set([
+      ...pingByTs.keys(),
+      ...lossByTs.keys(),
+    ]),
+  ]
     .sort((a, b) => a - b)
     .map(ts => buildPingWindowPoint(ts, pingByTs.get(ts), lossByTs.get(ts)))
 
@@ -1154,7 +1283,9 @@ export function adaptServer(server: CfServer, sysConfig: SysConfig | undefined =
       arch: server.arch || '-',
       cpu_cores: finiteNumber(server.cpu_cores),
       os: server.os || '-',
-      boot_time: bootTime > 0 ? new Date(bootTime).toISOString() : '',
+      boot_time: bootTime > 0
+        ? new Date(bootTime).toISOString()
+        : '',
       gpu_name: getGpuName(server.gpu_info),
       gpu_info: normalizeGpuInfo(server.gpu_info),
       region: String(server.region || '').toUpperCase(),
@@ -1177,9 +1308,13 @@ export function adaptServer(server: CfServer, sysConfig: SysConfig | undefined =
       traffic_limit_type: trafficLimitType(server.traffic_calc_type),
     },
     status: {
-      ...adaptStatusRecord(uuid, wire, updatedAt ? new Date(updatedAt).toISOString() : ''),
+      ...adaptStatusRecord(uuid, wire, updatedAt
+        ? new Date(updatedAt).toISOString()
+        : ''),
       online,
-      uptime: bootTime > 0 ? Math.max(0, Math.floor((now - bootTime) / 1000)) : 0,
+      uptime: bootTime > 0
+        ? Math.max(0, Math.floor((now - bootTime) / 1000))
+        : 0,
       ping,
       pingWindow,
     },
@@ -1202,7 +1337,12 @@ export async function fetchAllServers(): Promise<{
     clients[client.uuid] = client
     statuses[client.uuid] = status
   }
-  return { clients, statuses, latestReportUpdates: response.latestReportUpdates ?? [], sysConfig: response.sysConfig }
+  return {
+    clients,
+    statuses,
+    latestReportUpdates: response.latestReportUpdates ?? [],
+    sysConfig: response.sysConfig,
+  }
 }
 
 function adaptStatusRecord(uuid: string, row: Record<string, unknown>, time: string): StatusRecord {
@@ -1286,7 +1426,9 @@ export async function fetchPingHistory(uuid: string, hours = 1): Promise<{
         client: uuid,
         task_id: task.id,
         time,
-        value: lossValue === 100 || latencyValue === null ? -1 : latency ?? Number.NaN,
+        value: lossValue === 100 || latencyValue === null
+          ? -1
+          : latency ?? Number.NaN,
         loss: lossValue,
       })
       if (lossValue !== undefined) {
@@ -1313,7 +1455,13 @@ export async function fetchPingHistory(uuid: string, hours = 1): Promise<{
 
 export async function fetchServer(uuid: string): Promise<CfServer> {
   const server = await request<CfServer>(`/api/server?id=${encodeURIComponent(uuid)}`)
-  return { ...server, sysConfig: { ...cachedSysConfig, ...server.sysConfig } }
+  return {
+    ...server,
+    sysConfig: {
+      ...cachedSysConfig,
+      ...server.sysConfig,
+    },
+  }
 }
 
 export function buildAdminUrl(): string {

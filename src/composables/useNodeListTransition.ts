@@ -51,8 +51,11 @@ export function useNodeListTransition() {
     leaving.delete(element)
     // Clear inline styles so elements kept by @leave-cancelled do not stay stuck absolute / unclickable.
     resetLeavingStyle(element)
-    if (container && ![...leaving.values()].includes(container))
+    if (container && ![
+      ...leaving.values(),
+    ].includes(container)) {
       container.style.minHeight = ''
+    }
   }
 
   return { beforeUpdate, beforeLeave, afterLeave }

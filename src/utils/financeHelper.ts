@@ -49,7 +49,14 @@ const FINANCE_CURRENCY_CONFIG = {
 
 export type CurrencyCode = keyof typeof FINANCE_CURRENCY_CONFIG
 export const SUPPORTED_FINANCE_CURRENCIES = Object.keys(FINANCE_CURRENCY_CONFIG) as CurrencyCode[]
-export const DISPLAY_FINANCE_CURRENCIES = ['CNY', 'USD', 'HKD', 'EUR', 'GBP', 'JPY'] as const satisfies readonly CurrencyCode[]
+export const DISPLAY_FINANCE_CURRENCIES = [
+  'CNY',
+  'USD',
+  'HKD',
+  'EUR',
+  'GBP',
+  'JPY',
+] as const satisfies readonly CurrencyCode[]
 export type ExchangeRates = Record<CurrencyCode, number>
 
 interface ExchangeRatesCache {
@@ -212,7 +219,9 @@ export function getTodayDateKey(date = new Date()): string {
 
 export function shouldExcludeFreeNodes(): boolean {
   const value = getLocalStorageItem('fin_exclude_free')
-  return value === null ? true : value === 'true'
+  return value === null
+    ? true
+    : value === 'true'
 }
 
 export function getStoredFinanceCurrency(): CurrencyCode {
@@ -313,11 +322,17 @@ export function formatFinanceAmount(amount: number, currency: CurrencyCode): {
   symbol: string
   value: string
 } {
-  const safeAmount = Number.isFinite(amount) ? amount : 0
+  const safeAmount = Number.isFinite(amount)
+    ? amount
+    : 0
   const value = new Intl.NumberFormat('zh-CN', {
     maximumFractionDigits: 2,
-    minimumFractionDigits: Math.abs(safeAmount) < 100000 ? 2 : 0,
-    notation: Math.abs(safeAmount) >= 100000 ? 'compact' : 'standard',
+    minimumFractionDigits: Math.abs(safeAmount) < 100000
+      ? 2
+      : 0,
+    notation: Math.abs(safeAmount) >= 100000
+      ? 'compact'
+      : 'standard',
   }).format(safeAmount)
 
   return {
@@ -356,7 +371,9 @@ function getPriceCNY(node: NodeData, exchangeRates: ExchangeRates): number {
     return price
 
   const rate = exchangeRates[currency] || DEFAULT_EXCHANGE_RATES[currency]
-  return rate > 0 ? price / rate : 0
+  return rate > 0
+    ? price / rate
+    : 0
 }
 
 async function fetchExchangeRates(): Promise<ExchangeRates | null> {

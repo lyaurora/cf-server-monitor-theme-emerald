@@ -12,12 +12,20 @@ const pingLines = computed(() => resolvePingLines(Object.keys(props.node.ping ??
 const networks = computed(() => pingLines.value.map((key) => {
   const entry = props.node.ping?.[key]
   const timedOut = Boolean(entry && (entry.latest < 0 || entry.loss === 100))
-  const validLatency = !timedOut && entry && Number.isFinite(entry.latest) && entry.latest >= 0 ? entry.latest : null
+  const validLatency = !timedOut && entry && Number.isFinite(entry.latest) && entry.latest >= 0
+    ? entry.latest
+    : null
   return {
     key,
     name: entry?.name ?? key,
-    latency: timedOut ? '超时' : validLatency !== null ? `${Math.round(validLatency)}ms` : '--',
-    toneClass: timedOut ? 'text-rose-600 dark:text-rose-400' : getPingToneClass(validLatency ?? 0, validLatency !== null),
+    latency: timedOut
+      ? '超时'
+      : validLatency !== null
+        ? `${Math.round(validLatency)}ms`
+        : '--',
+    toneClass: timedOut
+      ? 'text-rose-600 dark:text-rose-400'
+      : getPingToneClass(validLatency ?? 0, validLatency !== null),
   }
 }))
 </script>

@@ -132,7 +132,9 @@ export function formatRemainingDays(expiredAt: string | number | undefined, now 
   const days = getDaysUntilExpired(expiredAt, now)
   if (getExpireStatus(expiredAt, now) === 'long_term')
     return '长期'
-  return `${days > 0 ? '+' : ''}${days} 天`
+  return `${days > 0
+    ? '+'
+    : ''}${days} 天`
 }
 
 /**
@@ -146,15 +148,22 @@ export function getExpireText(expiredAt: string | number | undefined, lang: 'zh-
   const status = getExpireStatus(expiredAt, now)
 
   if (status === 'expired') {
-    return lang === 'zh-CN' ? '已过期' : 'Expired'
+    return lang === 'zh-CN'
+      ? '已过期'
+      : 'Expired'
   }
 
   if (status === 'long_term') {
-    return lang === 'zh-CN' ? '长期' : 'Long-term'
+    return lang === 'zh-CN'
+      ? '长期'
+      : 'Long-term'
   }
 
-  if (new Date(expiredAt ?? '').getTime() - now < 86_400_000)
-    return lang === 'zh-CN' ? '不足 1 天' : 'Less than 1 day'
+  if (new Date(expiredAt ?? '').getTime() - now < 86_400_000) {
+    return lang === 'zh-CN'
+      ? '不足 1 天'
+      : 'Less than 1 day'
+  }
 
   if (lang === 'zh-CN') {
     return `${days} 天`
@@ -172,7 +181,9 @@ export function parseTags(tags: string | undefined): Array<{ text: string }> {
     .split(TAG_SEPARATOR_REGEX)
     .map(tag => tag.trim())
     .filter(Boolean)
-    .map(tag => ({ text: tag.replace(TAG_COLOR_SUFFIX_REGEX, '') }))
+    .map(tag => ({
+      text: tag.replace(TAG_COLOR_SUFFIX_REGEX, ''),
+    }))
 }
 
 /**
@@ -184,8 +195,11 @@ export function parseTags(tags: string | undefined): Array<{ text: string }> {
  */
 export function formatPrice(price: number, currency: string = '￥', lang: 'zh-CN' | 'en-US' = 'zh-CN'): string {
   const numericPrice = Number(price)
-  if (numericPrice === 0 || numericPrice === -1 || !Number.isFinite(numericPrice))
-    return lang === 'zh-CN' ? '免费' : 'Free'
+  if (numericPrice === 0 || numericPrice === -1 || !Number.isFinite(numericPrice)) {
+    return lang === 'zh-CN'
+      ? '免费'
+      : 'Free'
+  }
 
   const symbol = getCurrencyDisplaySymbol(currency)
   return `${symbol}${numericPrice}`
@@ -201,11 +215,15 @@ function getBillingCycleShortText(billingCycle: number): string {
     return '6M'
   if (days > 0 && days % 365 === 0) {
     const years = days / 365
-    return years === 1 ? 'Y' : `${years}Y`
+    return years === 1
+      ? 'Y'
+      : `${years}Y`
   }
   if (days > 0 && days % 30 === 0) {
     const months = days / 30
-    return months === 1 ? 'M' : `${months}M`
+    return months === 1
+      ? 'M'
+      : `${months}M`
   }
   if (days >= 360)
     return 'Y'
@@ -234,5 +252,7 @@ export function formatPriceWithCycle(
 ): string {
   const priceText = formatPrice(price, currency, lang)
   const cycleText = getBillingCycleShortText(billingCycle)
-  return Number(price) > 0 ? `${priceText}/${cycleText}` : priceText
+  return Number(price) > 0
+    ? `${priceText}/${cycleText}`
+    : priceText
 }

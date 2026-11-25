@@ -63,7 +63,15 @@ const osConfigs: OSConfig[] = [
   {
     name: 'Windows',
     image: 'os-icons/os-windows.svg',
-    keywords: ['windows', 'win32', 'win64', 'win10', 'win11', 'win server', 'microsoft'],
+    keywords: [
+      'windows',
+      'win32',
+      'win64',
+      'win10',
+      'win11',
+      'win server',
+      'microsoft',
+    ],
   },
   {
     name: 'Arch Linux',
@@ -83,7 +91,13 @@ const osConfigs: OSConfig[] = [
   {
     name: 'OpenWrt',
     image: 'os-icons/os-openwrt.svg',
-    keywords: ['openwrt', 'open wrt', 'open-wrt', 'qwrt', 'kwrt'],
+    keywords: [
+      'openwrt',
+      'open wrt',
+      'open-wrt',
+      'qwrt',
+      'kwrt',
+    ],
   },
   {
     name: 'ImmortalWrt',
@@ -148,7 +162,15 @@ const osConfigs: OSConfig[] = [
   {
     name: 'Alibaba Cloud Linux',
     image: 'os-icons/os-alibaba.svg',
-    keywords: ['alibaba', 'aliyun', 'alinux', 'anolis', 'openanolis', '阿里', '龙蜥'],
+    keywords: [
+      'alibaba',
+      'aliyun',
+      'alinux',
+      'anolis',
+      'openanolis',
+      '阿里',
+      '龙蜥',
+    ],
   },
   {
     name: 'OpenCloudOS',

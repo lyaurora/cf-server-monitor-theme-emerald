@@ -1,5 +1,5 @@
 import type { Client, NodeStatus, PingSample, PingWindowPoint } from '@/utils/rpc'
-import { useNow } from '@vueuse/core'
+import { useIntervalFn, useNow } from '@vueuse/core'
 import { defineStore } from 'pinia'
 import { computed, ref, shallowReactive } from 'vue'
 import { parseNodeGroups } from '@/utils/groupHelper'
@@ -46,7 +46,9 @@ const useNodesStore = defineStore('nodes', () => {
   const earthNodes = ref<NodeData[]>([])
   // Histories are replaced as snapshots; only track each node's array, not every sample field.
   const pingHistoryByUuid = shallowReactive<Record<string, PingHistoryPoint[]>>(Object.create(null))
-  const pingNow = useNow({ interval: 60_000 })
+  const pingNow = useNow({
+    scheduler: cb => useIntervalFn(cb, 60_000),
+  })
   const pageLoading = ref(false)
   const pageError = ref<'not-found' | 'forbidden' | 'network' | null>(null)
   const pingHistoryConfig = ref<PingHistoryConfig>({ ...PING_HISTORY_DEFAULTS })
@@ -180,20 +182,37 @@ const useNodesStore = defineStore('nodes', () => {
       return
     const node = nodesByUuid.value.get(uuid)
     // This feeds chart samples, including replay; current node state is guarded separately.
-    if (node)
-      node.pingSample = { time: status.time, ping: Object.fromEntries(entries) }
+    if (node) {
+      node.pingSample = {
+        time: status.time,
+        ping: Object.fromEntries(entries),
+      }
+    }
     const history = pingHistoryByUuid[uuid] ?? []
     const append = !history.length || sampleTime > history.at(-1)!.timeMs
-    const lines = { ...(append ? undefined : history.find(item => item.time === status.time)?.lines) }
+    const lines = {
+      ...(append
+        ? undefined
+        : history.find(item => item.time === status.time)?.lines),
+    }
     for (const [key, entry] of entries) {
       const previous = lines[key]
       const latency = Number.isFinite(entry.latest)
-        ? entry.latest >= 0 ? entry.latest : null
+        ? entry.latest >= 0
+          ? entry.latest
+          : null
         : previous?.latency ?? null
       const loss = Number.isFinite(entry.loss)
-        ? entry.loss >= 0 && entry.loss <= 100 ? entry.loss : null
+        ? entry.loss >= 0 && entry.loss <= 100
+          ? entry.loss
+          : null
         : previous?.loss ?? null
-      lines[key] = { latency: loss === 100 ? null : latency, loss }
+      lines[key] = {
+        latency: loss === 100
+          ? null
+          : latency,
+        loss,
+      }
     }
     const point = { time: status.time, timeMs: sampleTime, lines }
     const cutoff = historyCutoff()
@@ -207,7 +226,10 @@ const useNodesStore = defineStore('nodes', () => {
       return
     }
     // ponytail: bounded two-hour array; use a ring buffer if very large fleets make insertion costly.
-    pingHistoryByUuid[uuid] = [...history.filter(item => item.time !== point.time && item.timeMs >= cutoff), point]
+    pingHistoryByUuid[uuid] = [
+      ...history.filter(item => item.time !== point.time && item.timeMs >= cutoff),
+      point,
+    ]
       .sort((a, b) => a.timeMs - b.timeMs)
   }
 
@@ -256,7 +278,9 @@ const useNodesStore = defineStore('nodes', () => {
 
       const node = {
         ...createNodeFromClient(client),
-        ...(status ? extractStatusData(status) : {}),
+        ...(status
+          ? extractStatusData(status)
+          : {}),
       }
       if (index !== -1)
         nodes.value[index] = node
@@ -269,7 +293,10 @@ const useNodesStore = defineStore('nodes', () => {
         if (pingHistoryConfig.value.showThreeNetDetails && status.pingWindow?.length) {
           const cutoff = historyCutoff()
           pingHistoryByUuid[uuid] = status.pingWindow
-            .map(point => ({ ...point, timeMs: Date.parse(point.time) }))
+            .map(point => ({
+              ...point,
+              timeMs: Date.parse(point.time),
+            }))
             .filter(point => point.timeMs >= cutoff)
         }
         recordPingSample(uuid, status)

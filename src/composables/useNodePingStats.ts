@@ -25,7 +25,9 @@ export function pingAverage(points: NodePingHistoryPoint[], metric: 'latency' | 
     total += value * weight
     weights += weight
   })
-  return weights ? total / weights : null
+  return weights
+    ? total / weights
+    : null
 }
 
 export function useNodePingStats(
@@ -48,7 +50,12 @@ export function useNodePingStats(
         previous.endTimeMs = point.timeMs
       }
       else {
-        previous = { time: point.time, timeMs: point.timeMs, latency: values.latency, loss: values.loss }
+        previous = {
+          time: point.time,
+          timeMs: point.timeMs,
+          latency: values.latency,
+          loss: values.loss,
+        }
         points.push(previous)
       }
     }

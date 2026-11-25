@@ -92,7 +92,12 @@ let selectAllTasks = true
 const cutPeak = ref(false)
 const showDelay = ref(true)
 const showLoss = ref(true)
-const chartMargin = { top: 30, right: 24, bottom: 52, left: 56 }
+const chartMargin = {
+  top: 30,
+  right: 24,
+  bottom: 52,
+  left: 56,
+}
 
 // ==================== 数据获取 ====================
 
@@ -115,11 +120,22 @@ async function fetchRecords() {
     if (requestId !== fetchRequestId)
       return
 
-    const liveRecords = realtime ? remoteData.value.filter(record => !previousRecords.has(record)) : []
+    const liveRecords = realtime
+      ? remoteData.value.filter(record => !previousRecords.has(record))
+      : []
     // Keep real samples that the history endpoint has not persisted yet.
-    remoteData.value = mergePingRecords([...(realtime ? remoteData.value : []), ...result.records, ...liveRecords])
-    tasks.value = [...result.tasks, ...tasks.value.filter(task => remoteData.value.some(record => record.task_id === task.id)
-      && !result.tasks.some(item => item.id === task.id))]
+    remoteData.value = mergePingRecords([
+      ...(realtime
+        ? remoteData.value
+        : []),
+      ...result.records,
+      ...liveRecords,
+    ])
+    tasks.value = [
+      ...result.tasks,
+      ...tasks.value.filter(task => remoteData.value.some(record => record.task_id === task.id)
+        && !result.tasks.some(item => item.id === task.id)),
+    ]
 
     if (selectAllTasks) {
       selectedTaskIds.value = tasks.value.map(t => t.id)
@@ -129,7 +145,9 @@ async function fetchRecords() {
     if (requestId !== fetchRequestId)
       return
 
-    error.value = err instanceof Error ? err.message : '获取数据失败'
+    error.value = err instanceof Error
+      ? err.message
+      : '获取数据失败'
   }
   finally {
     if (requestId === fetchRequestId) {
@@ -150,7 +168,9 @@ function mergePingRecords(records: PingRecord[]): TimedPingRecord[] {
       continue
     deduped.set(`${record.task_id}:${record.time}`, { ...record, timeMs })
   }
-  const merged = [...deduped.values()].sort((a, b) => a.timeMs - b.timeMs)
+  const merged = [
+    ...deduped.values(),
+  ].sort((a, b) => a.timeMs - b.timeMs)
   if (!merged.length)
     return []
   const cutoff = merged.at(-1)!.timeMs - selectedHours.value * 3_600_000
@@ -170,7 +190,9 @@ const mergedData = computed(() => {
       grouped.set(ts, { time: ts })
 
     const group = grouped.get(ts)!
-    group[rec.task_id] = Number.isFinite(rec.value) && rec.value >= 0 ? rec.value : null
+    group[rec.task_id] = Number.isFinite(rec.value) && rec.value >= 0
+      ? rec.value
+      : null
     group[`timeout_${rec.task_id}`] = rec.value < 0
   }
 
@@ -217,7 +239,9 @@ const taskColors = computed(() => new Map(tasks.value.map((task, idx) => [task.i
 
 function finiteMetric(value: unknown): number | undefined {
   const number = Number(value)
-  return Number.isFinite(number) ? number : undefined
+  return Number.isFinite(number)
+    ? number
+    : undefined
 }
 
 function average(values: number[]): number | undefined {
@@ -234,7 +258,9 @@ function percentile(sorted: number[], ratio: number): number | undefined {
 }
 
 function sampleIntervalSeconds(records: TimedPingRecord[]): number | undefined {
-  const timestamps = [...new Set(records.map(record => record.timeMs))]
+  const timestamps = [
+    ...new Set(records.map(record => record.timeMs)),
+  ]
     .sort((a, b) => a - b)
   if (timestamps.length < 2)
     return undefined
@@ -246,7 +272,9 @@ function sampleIntervalSeconds(records: TimedPingRecord[]): number | undefined {
   if (!deltas.length)
     return undefined
   const seconds = Math.round(deltas[Math.floor(deltas.length / 2)]! / 1000)
-  return seconds > 0 ? seconds : undefined
+  return seconds > 0
+    ? seconds
+    : undefined
 }
 
 // 优先使用当前查询周期内的原始样本，缺少时才回退到接口聚合字段。
@@ -271,7 +299,9 @@ const latestValues = computed(() => {
       .map(record => finiteMetric(record.loss))
       .filter((value): value is number => value !== undefined)
     const latestRecord = taskRecords.at(-1)
-    const latest = latestRecord && Number.isFinite(latestRecord.value) && latestRecord.value >= 0 ? latestRecord.value : undefined
+    const latest = latestRecord && Number.isFinite(latestRecord.value) && latestRecord.value >= 0
+      ? latestRecord.value
+      : undefined
     const p50 = percentile(sortedLatency, 0.5)
     const p99 = percentile(sortedLatency, 0.99)
 
@@ -284,7 +314,9 @@ const latestValues = computed(() => {
       timedOut: latestRecord !== undefined && latestRecord.value < 0,
       p50,
       p99,
-      p99_p50_ratio: p50 && p99 ? p99 / p50 : undefined,
+      p99_p50_ratio: p50 && p99
+        ? p99 / p50
+        : undefined,
       interval: sampleIntervalSeconds(latencyRecords) ?? finiteMetric(task.interval),
       loss: average(lossValues) ?? finiteMetric(task.loss),
       total: latencyRecords.length || undefined,
@@ -314,24 +346,36 @@ function appendRealtimePing(sample: PingSample): void {
       return []
 
     if (!tasks.value.some(task => task.id === taskId)) {
-      tasks.value = [...tasks.value, { id: taskId, key, name: ping.name }]
+      tasks.value = [
+        ...tasks.value,
+        { id: taskId, key, name: ping.name },
+      ]
       if (selectAllTasks && !selectedTaskIds.value.includes(taskId))
         selectedTaskIds.value = [...selectedTaskIds.value, taskId]
     }
 
-    return [{
-      client: props.uuid,
-      task_id: taskId,
-      time: sample.time,
-      value: ping.loss === 100 ? -1 : ping.latest,
-      loss: Number.isFinite(ping.loss) ? ping.loss : undefined,
-    }]
+    return [
+      {
+        client: props.uuid,
+        task_id: taskId,
+        time: sample.time,
+        value: ping.loss === 100
+          ? -1
+          : ping.latest,
+        loss: Number.isFinite(ping.loss)
+          ? ping.loss
+          : undefined,
+      },
+    ]
   })
 
   if (!records.length)
     return
 
-  remoteData.value = mergePingRecords([...remoteData.value, ...records])
+  remoteData.value = mergePingRecords([
+    ...remoteData.value,
+    ...records,
+  ])
 }
 
 const packetLossMarkers = computed(() => {
@@ -341,7 +385,9 @@ const packetLossMarkers = computed(() => {
       .filter(record => record.task_id === task.id
         && ((record.loss ?? 0) > 0 || record.value < 0))
       .map(record => record.timeMs)
-    markers.set(task.id, [...new Set(timestamps)].sort((a, b) => a - b))
+    markers.set(task.id, [
+      ...new Set(timestamps),
+    ].sort((a, b) => a - b))
   }
   return markers
 })
@@ -395,11 +441,20 @@ const pingChartOption = computed(() => {
       type: 'line' as const,
       data: data.filter(d => Object.hasOwn(d, `timeout_${task.id}`))
         .map(d => [d.time as number, d[task.id] as number | null ?? null]),
-      smooth: showDelay.value ? (cutPeak.value ? 0.6 : 0.1) : 0,
+      smooth: showDelay.value
+        ? (cutPeak.value ? 0.6 : 0.1)
+        : 0,
       showSymbol: false,
       connectNulls: false,
-      lineStyle: { width: showDelay.value ? 1.5 : 0, color, cap: 'round' as const },
-      itemStyle: { color, opacity: showDelay.value ? 1 : 0 },
+      lineStyle: {
+        width: showDelay.value ? 1.5 : 0,
+        color,
+        cap: 'round' as const,
+      },
+      itemStyle: {
+        color,
+        opacity: showDelay.value ? 1 : 0,
+      },
       markLine: showLoss.value && lossMarkerTimes.length
         ? {
             silent: true,
@@ -425,7 +480,9 @@ const pingChartOption = computed(() => {
   return {
     animation: false,
     // 全局颜色设置（用于图例等）
-    color: [...colorMap.values()],
+    color: [
+      ...colorMap.values(),
+    ],
     tooltip: {
       ...baseTooltipConfig.value,
       formatter: (params: unknown) => {
@@ -457,7 +514,9 @@ const pingChartOption = computed(() => {
         for (const item of sortedParams) {
           if (item.timedOut || (item.value !== null && item.value !== undefined)) {
             const color = colorMap.get(item.taskId) || chartColors[0]!
-            const valueText = item.timedOut ? '超时' : `${Math.round(item.value!)} ms`
+            const valueText = item.timedOut
+              ? '超时'
+              : `${Math.round(item.value!)} ms`
             html += renderTooltipRow(color, item.seriesName, valueText, true)
           }
         }
@@ -476,7 +535,10 @@ const pingChartOption = computed(() => {
       // Use task IDs so lines with the same display name remain independently selectable.
       data: taskList.map(task => String(task.id)),
       formatter: (name: string) => taskList.find(task => String(task.id) === name)?.name ?? name,
-      selected: Object.fromEntries(taskList.map(task => [String(task.id), selectedTaskIds.value.includes(task.id)])),
+      selected: Object.fromEntries(taskList.map(task => [
+        String(task.id),
+        selectedTaskIds.value.includes(task.id),
+      ])),
     },
     grid: chartMargin,
     xAxis: {

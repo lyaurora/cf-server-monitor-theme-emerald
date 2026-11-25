@@ -25,7 +25,15 @@ function safeUrl(value: string | undefined, image = false): string | undefined {
     return undefined
   try {
     const url = new URL(value, 'https://theme.invalid/')
-    return ['http:', 'https:', ...(!image ? ['mailto:'] : [])].includes(url.protocol) ? value : undefined
+    return [
+      'http:',
+      'https:',
+      ...(!image
+        ? ['mailto:']
+        : []),
+    ].includes(url.protocol)
+      ? value
+      : undefined
   }
   catch {
     return undefined
@@ -91,7 +99,10 @@ function parseMarkdown(text: string): Token[] {
       remaining = remaining.slice(1)
     }
     else {
-      tokens.push({ type: 'text', content: remaining.slice(0, nextSpecial) })
+      tokens.push({
+        type: 'text',
+        content: remaining.slice(0, nextSpecial),
+      })
       remaining = remaining.slice(nextSpecial)
     }
   }

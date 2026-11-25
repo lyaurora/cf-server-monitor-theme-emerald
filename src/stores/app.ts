@@ -226,7 +226,9 @@ const useAppStore = defineStore('app', () => {
 
   function updateThemeMode(mode?: ThemeMode) {
     if (mode) {
-      themeMode.value = isValidThemeMode(mode) ? mode : 'auto'
+      themeMode.value = isValidThemeMode(mode)
+        ? mode
+        : 'auto'
       return
     }
 
@@ -236,7 +238,9 @@ const useAppStore = defineStore('app', () => {
       dark: 'auto',
     }
 
-    const currentMode = isValidThemeMode(themeMode.value) ? themeMode.value : 'auto'
+    const currentMode = isValidThemeMode(themeMode.value)
+      ? themeMode.value
+      : 'auto'
     themeMode.value = nextMode[currentMode]
   }
 

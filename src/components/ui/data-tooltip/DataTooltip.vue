@@ -86,10 +86,16 @@ function updateCursor(event: PointerEvent | FocusEvent) {
 
 const sizeStyle = computed(() => {
   const style: Record<string, string> = {}
-  if (props.width != null)
-    style.width = typeof props.width === 'number' ? `${props.width}px` : props.width
-  if (props.height != null)
-    style.height = typeof props.height === 'number' ? `${props.height}px` : props.height
+  if (props.width != null) {
+    style.width = typeof props.width === 'number'
+      ? `${props.width}px`
+      : props.width
+  }
+  if (props.height != null) {
+    style.height = typeof props.height === 'number'
+      ? `${props.height}px`
+      : props.height
+  }
   return style
 })
 
@@ -106,7 +112,9 @@ function shouldPassthroughTouch(event: PointerEvent): boolean {
     return false
   if (props.as === 'button' || props.as === 'a')
     return true
-  const target = event.target instanceof Element ? event.target : null
+  const target = event.target instanceof Element
+    ? event.target
+    : null
   return Boolean(target?.closest('a[href]'))
 }
 

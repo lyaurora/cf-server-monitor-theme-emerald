@@ -119,7 +119,12 @@ const regionClusters = computed<RegionCluster[]>(() => {
 
     let entry = map.get(code)
     if (!entry) {
-      entry = { code, coord, servers: 0, onlineServers: 0 }
+      entry = {
+        code,
+        coord,
+        servers: 0,
+        onlineServers: 0,
+      }
       map.set(code, entry)
     }
     entry.servers += 1
@@ -178,7 +183,9 @@ function createProjectionFrame(): ProjectionFrame {
   return {
     width,
     height,
-    aspect: height > 0 ? width / height : 1,
+    aspect: height > 0
+      ? width / height
+      : 1,
     cosTheta: Math.cos(theta),
     sinTheta: Math.sin(theta),
     cosPhi: Math.cos(phi),
@@ -471,7 +478,10 @@ watch(
 )
 
 watch(
-  [() => regionClusters.value.map(clusterKey).join(','), userCoord],
+  [
+    () => regionClusters.value.map(clusterKey).join(','),
+    userCoord,
+  ],
   async () => {
     if (!globe)
       return

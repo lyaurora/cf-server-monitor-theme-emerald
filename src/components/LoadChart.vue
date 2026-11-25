@@ -48,8 +48,18 @@ const chartColors = {
 }
 
 // 图表边距配置
-const chartMargin = { top: 30, right: 24, bottom: 32, left: 56 }
-const chartMarginWithLegend = { top: 30, right: 24, bottom: 52, left: 56 }
+const chartMargin = {
+  top: 30,
+  right: 24,
+  bottom: 32,
+  left: 56,
+}
+const chartMarginWithLegend = {
+  top: 30,
+  right: 24,
+  bottom: 52,
+  left: 56,
+}
 
 // 可用视图列表
 const availableViews = computed(() => getAvailableChartTimeRanges(maxRecordPreserveTime.value))
@@ -170,10 +180,21 @@ async function fetchData() {
     if (requestId !== fetchRequestId)
       return
 
-    const liveRecords = realtime ? remoteData.value.filter(record => !previousRecords.has(record)) : []
+    const liveRecords = realtime
+      ? remoteData.value.filter(record => !previousRecords.has(record))
+      : []
     // History persistence can lag behind samples already displayed before this request.
-    const mergedMap = new Map([...(realtime ? remoteData.value : []), ...result, ...liveRecords].map(record => [record.time, record]))
-    const records = Array.from(mergedMap.values(), record => ({ record, timeMs: Date.parse(record.time) }))
+    const mergedMap = new Map([
+      ...(realtime
+        ? remoteData.value
+        : []),
+      ...result,
+      ...liveRecords,
+    ].map(record => [record.time, record]))
+    const records = Array.from(mergedMap.values(), record => ({
+      record,
+      timeMs: Date.parse(record.time),
+    }))
       .filter(item => Number.isFinite(item.timeMs))
       .sort((a, b) => a.timeMs - b.timeMs)
       .map(item => item.record)
@@ -183,7 +204,9 @@ async function fetchData() {
   catch (err) {
     if (requestId !== fetchRequestId)
       return
-    error.value = err instanceof Error ? err.message : '获取数据失败'
+    error.value = err instanceof Error
+      ? err.message
+      : '获取数据失败'
   }
   finally {
     if (requestId === fetchRequestId) {
@@ -208,8 +231,12 @@ const chartData = computed(() => {
   const hour = minute * 60
 
   // 7D 长档位用 1 小时网格，其余历史档位用 15 分钟网格
-  const intervalSec = hours > 120 ? hour : minute * 15
-  const maxGap = hours > 120 ? hour * 2 : minute * 30
+  const intervalSec = hours > 120
+    ? hour
+    : minute * 15
+  const maxGap = hours > 120
+    ? hour * 2
+    : minute * 30
 
   return fillMissingTimePoints(data, intervalSec, hours * 3600, maxGap)
 })
@@ -222,14 +249,30 @@ const latestStatus = computed(() => {
 })
 const swapTotal = computed(() => latestStatus.value?.swap_total ?? nodeInfo.value?.swap_total)
 const latestFormatted = computed(() => ({
-  ram: latestStatus.value?.ram != null ? formatBytesSplit(latestStatus.value.ram) : null,
-  memTotal: nodeInfo.value?.mem_total ? formatBytesSplit(nodeInfo.value.mem_total) : null,
-  swap: latestStatus.value?.swap != null ? formatBytesSplit(latestStatus.value.swap) : null,
-  swapTotal: swapTotal.value != null ? formatBytesSplit(swapTotal.value) : null,
-  disk: latestStatus.value?.disk != null ? formatBytesSplit(latestStatus.value.disk) : null,
-  diskTotal: nodeInfo.value?.disk_total ? formatBytesSplit(nodeInfo.value.disk_total) : null,
-  netOut: latestStatus.value?.net_out != null ? formatBytesSplit(latestStatus.value.net_out) : null,
-  netIn: latestStatus.value?.net_in != null ? formatBytesSplit(latestStatus.value.net_in) : null,
+  ram: latestStatus.value?.ram != null
+    ? formatBytesSplit(latestStatus.value.ram)
+    : null,
+  memTotal: nodeInfo.value?.mem_total
+    ? formatBytesSplit(nodeInfo.value.mem_total)
+    : null,
+  swap: latestStatus.value?.swap != null
+    ? formatBytesSplit(latestStatus.value.swap)
+    : null,
+  swapTotal: swapTotal.value != null
+    ? formatBytesSplit(swapTotal.value)
+    : null,
+  disk: latestStatus.value?.disk != null
+    ? formatBytesSplit(latestStatus.value.disk)
+    : null,
+  diskTotal: nodeInfo.value?.disk_total
+    ? formatBytesSplit(nodeInfo.value.disk_total)
+    : null,
+  netOut: latestStatus.value?.net_out != null
+    ? formatBytesSplit(latestStatus.value.net_out)
+    : null,
+  netIn: latestStatus.value?.net_in != null
+    ? formatBytesSplit(latestStatus.value.net_in)
+    : null,
 }))
 
 // ==================== 工具函数 ====================
@@ -326,7 +369,10 @@ const cpuChartOption = computed(() => ({
     {
       ...baseYAxisConfig.value,
       name: 'CPU %',
-      nameTextStyle: { color: chartThemeColors.value.textSecondary, padding: [0, 40, 0, 0] },
+      nameTextStyle: {
+        color: chartThemeColors.value.textSecondary,
+        padding: [0, 40, 0, 0],
+      },
       min: 0,
       max: 100,
       axisLabel: { ...baseYAxisConfig.value.axisLabel, formatter: '{value}%' },
@@ -334,7 +380,10 @@ const cpuChartOption = computed(() => ({
     {
       ...baseYAxisConfig.value,
       name: '负载',
-      nameTextStyle: { color: chartThemeColors.value.textSecondary, padding: [0, 0, 0, 40] },
+      nameTextStyle: {
+        color: chartThemeColors.value.textSecondary,
+        padding: [0, 0, 0, 40],
+      },
       min: 0,
       splitLine: { show: false },
     },
@@ -395,8 +444,14 @@ const memoryChartOption = computed(() => ({
       const ramTotal = record.ram_total ?? nodeInfo.value?.mem_total ?? 0
       const swapUsed = record.swap ?? 0
       const swapTotal = record.swap_total ?? nodeInfo.value?.swap_total
-      const ramPercent = ramTotal > 0 ? ((ramUsed / ramTotal) * 100).toFixed(1) : '0'
-      const swapPercent = swapTotal == null ? '' : ` (${swapTotal > 0 ? ((swapUsed / swapTotal) * 100).toFixed(1) : '0'}%)`
+      const ramPercent = ramTotal > 0
+        ? ((ramUsed / ramTotal) * 100).toFixed(1)
+        : '0'
+      const swapPercent = swapTotal == null
+        ? ''
+        : ` (${swapTotal > 0
+          ? ((swapUsed / swapTotal) * 100).toFixed(1)
+          : '0'}%)`
 
       const timeStr = formatChartTooltipTime(record.time, selectedHours.value || 1)
       let html = `<div style="font-weight:600;margin-bottom:6px;color:${chartThemeColors.value.textSecondary}">${timeStr}</div>`
@@ -419,7 +474,10 @@ const memoryChartOption = computed(() => ({
   yAxis: {
     ...baseYAxisConfig.value,
     name: '内存',
-    nameTextStyle: { color: chartThemeColors.value.textSecondary, padding: [0, 40, 0, 0] },
+    nameTextStyle: {
+      color: chartThemeColors.value.textSecondary,
+      padding: [0, 40, 0, 0],
+    },
     axisLabel: {
       ...baseYAxisConfig.value.axisLabel,
       formatter: (val: number) => formatBytes(val),
@@ -477,7 +535,9 @@ const diskChartOption = computed(() => ({
 
       const diskUsed = record.disk ?? 0
       const diskTotal = record.disk_total ?? nodeInfo.value?.disk_total ?? 0
-      const diskPercent = diskTotal > 0 ? ((diskUsed / diskTotal) * 100).toFixed(1) : '0'
+      const diskPercent = diskTotal > 0
+        ? ((diskUsed / diskTotal) * 100).toFixed(1)
+        : '0'
 
       const timeStr = formatChartTooltipTime(record.time, selectedHours.value || 1)
       let html = `<div style="font-weight:600;margin-bottom:6px;color:${chartThemeColors.value.textSecondary}">${timeStr}</div>`
@@ -492,7 +552,10 @@ const diskChartOption = computed(() => ({
   yAxis: {
     ...baseYAxisConfig.value,
     name: '磁盘',
-    nameTextStyle: { color: chartThemeColors.value.textSecondary, padding: [0, 40, 0, 0] },
+    nameTextStyle: {
+      color: chartThemeColors.value.textSecondary,
+      padding: [0, 40, 0, 0],
+    },
     axisLabel: {
       ...baseYAxisConfig.value.axisLabel,
       formatter: (val: number) => formatBytes(val),
@@ -544,7 +607,9 @@ const networkChartOption = computed(() => ({
       html += '<div style="display:flex;flex-direction:column;gap:4px">'
 
       for (const item of p) {
-        const label = item.seriesName === '下载' ? '↓ 下载' : '↑ 上传'
+        const label = item.seriesName === '下载'
+          ? '↓ 下载'
+          : '↑ 上传'
         html += renderTooltipRow(item.color, label, `${formatBytes(item.value)}/s`)
       }
       html += '</div>'
@@ -565,7 +630,10 @@ const networkChartOption = computed(() => ({
   yAxis: {
     ...baseYAxisConfig.value,
     name: '速度',
-    nameTextStyle: { color: chartThemeColors.value.textSecondary, padding: [0, 40, 0, 0] },
+    nameTextStyle: {
+      color: chartThemeColors.value.textSecondary,
+      padding: [0, 40, 0, 0],
+    },
     axisLabel: {
       ...baseYAxisConfig.value.axisLabel,
       formatter: (val: number) => `${formatBytes(val)}/s`,
@@ -613,7 +681,9 @@ const connectionsChartOption = computed(() => ({
       html += '<div style="display:flex;flex-direction:column;gap:4px">'
 
       for (const item of p) {
-        const displayValue = item.value != null ? String(Math.round(item.value)) : '-'
+        const displayValue = item.value != null
+          ? String(Math.round(item.value))
+          : '-'
         html += renderTooltipRow(item.color, item.seriesName, displayValue)
       }
       html += '</div>'
@@ -634,7 +704,10 @@ const connectionsChartOption = computed(() => ({
   yAxis: {
     ...baseYAxisConfig.value,
     name: '连接数',
-    nameTextStyle: { color: chartThemeColors.value.textSecondary, padding: [0, 40, 0, 0] },
+    nameTextStyle: {
+      color: chartThemeColors.value.textSecondary,
+      padding: [0, 40, 0, 0],
+    },
     min: 0,
     axisLabel: {
       ...baseYAxisConfig.value.axisLabel,
@@ -679,7 +752,9 @@ const processChartOption = computed(() => ({
         return ''
 
       const timeStr = formatChartTooltipTime(record.time, selectedHours.value || 1)
-      const displayValue = firstParam.value != null ? String(Math.round(firstParam.value)) : '-'
+      const displayValue = firstParam.value != null
+        ? String(Math.round(firstParam.value))
+        : '-'
 
       let html = `<div style="font-weight:600;margin-bottom:6px;color:${chartThemeColors.value.textSecondary}">${timeStr}</div>`
       html += '<div style="display:flex;flex-direction:column;gap:4px">'
@@ -693,7 +768,10 @@ const processChartOption = computed(() => ({
   yAxis: {
     ...baseYAxisConfig.value,
     name: '进程',
-    nameTextStyle: { color: chartThemeColors.value.textSecondary, padding: [0, 40, 0, 0] },
+    nameTextStyle: {
+      color: chartThemeColors.value.textSecondary,
+      padding: [0, 40, 0, 0],
+    },
     min: 0,
     axisLabel: {
       ...baseYAxisConfig.value.axisLabel,

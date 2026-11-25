@@ -55,15 +55,22 @@ const expiryText = computed(() => {
   if (!Number.isFinite(expiresAt))
     return '--'
   const now = nodesStore.pingNow.getTime()
-  if (expiresAt <= now)
-    return appStore.lang === 'zh-CN' ? '已过期' : 'Expired'
+  if (expiresAt <= now) {
+    return appStore.lang === 'zh-CN'
+      ? '已过期'
+      : 'Expired'
+  }
   const status = getExpireStatus(props.node.expired_at, now)
   const text = getExpireText(props.node.expired_at, appStore.lang, now)
   if (status === 'expired' || status === 'long_term' || expiresAt - now < 86_400_000)
     return text
-  return appStore.lang === 'zh-CN' ? `剩余 ${text}` : `${text} left`
+  return appStore.lang === 'zh-CN'
+    ? `剩余 ${text}`
+    : `${text} left`
 })
-const planText = computed(() => hasConfiguredPrice(props.node) ? formatPriceWithCycle(props.node.price, props.node.billing_cycle, props.node.currency, appStore.lang) : '--')
+const planText = computed(() => hasConfiguredPrice(props.node)
+  ? formatPriceWithCycle(props.node.price, props.node.billing_cycle, props.node.currency, appStore.lang)
+  : '--')
 
 const showTrafficCol = computed(() => props.node.showTraffic !== false)
 const showFinanceCol = computed(() => props.node.showPrice !== false || props.node.showExpire !== false)
