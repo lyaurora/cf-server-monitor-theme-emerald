@@ -1,10 +1,13 @@
 import { createPinia } from 'pinia'
 import { createApp } from 'vue'
 import { getApiAssetUrl } from '@/utils/api'
+import { registerLocalIcons } from '@/utils/icons'
 import App from './App.vue'
 import router from './router'
 
 import './styles/main.css'
+
+registerLocalIcons()
 
 const favicon = document.createElement('link')
 favicon.rel = 'icon'
