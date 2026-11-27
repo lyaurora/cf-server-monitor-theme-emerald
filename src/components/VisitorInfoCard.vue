@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Icon } from '@iconify/vue'
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useAppStore } from '@/stores/app'
 import { getApiAssetUrl } from '@/utils/api'
 
@@ -40,7 +40,10 @@ const ISO_COUNTRY_CODE_REGEX = /^[A-Z]{2}$/i
 const IPV4_SEGMENT_REGEX = /^\d+$/
 const IPV6_SEGMENT_REGEX = /^[\dA-F]{1,4}$/i
 const IPV6_DOUBLE_COLON = '::'
+const VISITOR_GEO_CACHE_KEY = 'emerald:visitor-geo'
+const VISITOR_GEO_CACHE_TTL_MS = 30 * 60_000
 
+const cardRef = ref<HTMLElement | null>(null)
 const loading = ref(true)
 const device = ref('检测中')
 const browser = ref('检测中')
@@ -454,10 +457,100 @@ function handleFlagError(): void {
   flagVisible.value = false
 }
 
+function readCachedVisitorGeo(): VisitorGeoData | null {
+  if (typeof sessionStorage === 'undefined')
+    return null
+  try {
+    const raw = sessionStorage.getItem(VISITOR_GEO_CACHE_KEY)
+    if (!raw)
+      return null
+    const parsed = JSON.parse(raw) as Partial<VisitorGeoData> & { savedAt?: unknown }
+    const age = typeof parsed.savedAt === 'number'
+      ? Date.now() - parsed.savedAt
+      : Number.NaN
+    if (!Number.isFinite(age) || age < 0 || age > VISITOR_GEO_CACHE_TTL_MS) {
+      sessionStorage.removeItem(VISITOR_GEO_CACHE_KEY)
+      return null
+    }
+    const cachedIp = typeof parsed.ip === 'string'
+      ? parsed.ip.trim()
+      : ''
+    const cachedIsp = typeof parsed.isp === 'string'
+      ? parsed.isp.trim()
+      : ''
+    const cachedLocation = typeof parsed.location === 'string'
+      ? parsed.location.trim()
+      : ''
+    if (!cachedIp || !cachedIsp || !cachedLocation) {
+      sessionStorage.removeItem(VISITOR_GEO_CACHE_KEY)
+      return null
+    }
+    return {
+      ip: cachedIp,
+      isp: cachedIsp,
+      location: cachedLocation,
+      countryCode: normalizeCountryCode(typeof parsed.countryCode === 'string'
+        ? parsed.countryCode
+        : ''),
+    }
+  }
+  catch {
+    try {
+      sessionStorage.removeItem(VISITOR_GEO_CACHE_KEY)
+    }
+    catch {}
+    return null
+  }
+}
+
+function writeCachedVisitorGeo(geo: VisitorGeoData): void {
+  if (typeof sessionStorage === 'undefined')
+    return
+  try {
+    sessionStorage.setItem(VISITOR_GEO_CACHE_KEY, JSON.stringify({
+      ...geo,
+      savedAt: Date.now(),
+    }))
+  }
+  catch {}
+}
+
+function handleDocumentPointerDown(event: PointerEvent): void {
+  const card = cardRef.value
+  if (!card || !event.target || card.contains(event.target as Node))
+    return
+  expand.value = false
+}
+
+function handleDocumentKeydown(event: KeyboardEvent): void {
+  if (event.key === 'Escape')
+    expand.value = false
+}
+
+function removeExpandListeners(): void {
+  if (typeof document === 'undefined')
+    return
+  document.removeEventListener('pointerdown', handleDocumentPointerDown, true)
+  document.removeEventListener('keydown', handleDocumentKeydown, true)
+}
+
+watch(expand, (isExpanded) => {
+  if (typeof document === 'undefined')
+    return
+  if (isExpanded) {
+    document.addEventListener('pointerdown', handleDocumentPointerDown, true)
+    document.addEventListener('keydown', handleDocumentKeydown, true)
+  }
+  else {
+    removeExpandListeners()
+  }
+})
+
 const geoAbortController = new AbortController()
 
 onBeforeUnmount(() => {
   geoAbortController.abort()
+  removeExpandListeners()
 })
 
 onMounted(async () => {
@@ -466,10 +559,13 @@ onMounted(async () => {
   browser.value = client.browser
   visitTime.value = formatVisitTime(new Date())
 
-  const geo = await fetchVisitorGeo(geoAbortController.signal)
+  const cachedGeo = readCachedVisitorGeo()
+  const geo = cachedGeo ?? await fetchVisitorGeo(geoAbortController.signal)
   if (geoAbortController.signal.aborted)
     return
   if (geo) {
+    if (!cachedGeo)
+      writeCachedVisitorGeo(geo)
     ip.value = geo.ip
     isp.value = geo.isp
     location.value = geo.location
@@ -489,12 +585,14 @@ onMounted(async () => {
 <template>
   <div class="pointer-events-none fixed inset-x-0 bottom-2.5 z-30 flex justify-center">
     <div
+      ref="cardRef"
       role="button"
       tabindex="0"
       :aria-expanded="expand"
       aria-label="展开或收起访客信息"
-      class="pointer-events-auto cursor-pointer p-1.5 px-3 shadow-[-1px_-1px_0_var(--background),0_0_16px_rgba(0,0,0,0.05)] transition-[border-radius,transform,background-color,box-shadow] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] bg-background/30 backdrop-blur-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      class="pointer-events-auto cursor-pointer p-1.5 px-3 shadow-[-1px_-1px_0_var(--background),0_0_16px_rgba(0,0,0,0.05)] bg-background/30 backdrop-blur-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       :class="[
+        !appStore.disablePageAnimation && 'transition-[border-radius,transform,background-color,box-shadow] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none',
         expand
           ? 'rounded-lg -translate-y-1 bg-background/38 shadow-[-1px_-1px_0_var(--background),0_10px_28px_rgba(0,0,0,0.08)]'
           : 'rounded-xl',
@@ -504,6 +602,7 @@ onMounted(async () => {
       @keydown.space.prevent="expand = !expand"
     >
       <TransitionGroup
+        :css="!appStore.disablePageAnimation"
         tag="div"
         name="visitor-pill"
         class="transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]"
@@ -528,7 +627,7 @@ onMounted(async () => {
             class="min-w-0 transition-[opacity,transform] duration-220 ease-[cubic-bezier(0.22,1,0.36,1)]"
             :class="[expand || !index ? 'block opacity-100 translate-y-0' : 'hidden md:block md:opacity-100', !expand && index ? 'md:translate-y-0' : '']"
           >
-            <div v-if="loading" class="h-2 w-15 animate-pulse rounded-full bg-muted/70" />
+            <div v-if="loading" class="h-2 w-15 rounded-full bg-muted/70" :class="!appStore.disablePageAnimation && 'animate-pulse'" />
             <p v-else class="max-w-30 truncate text-xs font-medium text-muted-foreground sm:max-w-50">
               {{ item.value }}
             </p>
@@ -563,6 +662,10 @@ onMounted(async () => {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .animate-pulse {
+    animation: none;
+  }
+
   .visitor-pill-enter-active,
   .visitor-pill-leave-active,
   .visitor-pill-move {

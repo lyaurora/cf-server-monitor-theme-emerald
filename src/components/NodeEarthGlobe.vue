@@ -35,7 +35,7 @@ const documentVisibility = useDocumentVisibility()
 const elementVisible = useElementVisibility(containerRef)
 const reducedMotion = usePreferredReducedMotion()
 const shouldRender = computed(() => documentVisibility.value === 'visible' && elementVisible.value)
-const shouldAutoRotate = computed(() => appStore.earthViewMode !== 'earth-stop' && reducedMotion.value !== 'reduce')
+const shouldAutoRotate = computed(() => appStore.earthViewMode !== 'earth-stop' && !appStore.disablePageAnimation && reducedMotion.value !== 'reduce')
 
 let globe: Globe | null = null
 const INITIAL_THETA = 0.22
@@ -571,11 +571,11 @@ function formatRate(bytesPerSec: number): string {
       class="absolute top-6 md:top-12 left-0 text-[10px] text-muted-foreground pointer-events-none flex gap-2 items-center backdrop-blur-lg bg-background/60 rounded px-2 py-0.5"
     >
       <div v-if="onlineServers > 0" class="flex items-center gap-1">
-        <span class="inline-block size-1.5 rounded-full bg-green-600 animate-pulse" />
+        <span class="inline-block size-1.5 rounded-full bg-green-600" :class="!appStore.disablePageAnimation && 'animate-pulse'" />
         <span class="text-green-600">{{ onlineServers }}</span>
       </div>
       <div v-if="offlineServers > 0" class="flex items-center gap-1">
-        <span class="inline-block size-1.5 rounded-full bg-yellow-600 animate-pulse" />
+        <span class="inline-block size-1.5 rounded-full bg-yellow-600" :class="!appStore.disablePageAnimation && 'animate-pulse'" />
         <span class="text-yellow-600">{{ offlineServers }}</span>
       </div>
       <!-- <div v-if="totalServers > 0" class="flex items-center gap-1">
