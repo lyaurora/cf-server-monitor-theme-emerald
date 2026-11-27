@@ -43,8 +43,8 @@ const chartColors = [
   '#FB923C', // 橙色
 ]
 
-// 从 publicSettings 获取记录保留时间
-const maxPingRecordPreserveTime = computed(() => appStore.publicSettings?.ping_record_preserve_time || 168)
+// 从 publicSettings 获取记录保留时间（未加载完成前按匿名上限 24 小时兜底）
+const maxPingRecordPreserveTime = computed(() => appStore.publicSettings?.ping_record_preserve_time || 24)
 
 // 可用视图列表
 const availableViews = computed(() => getAvailableChartTimeRanges(maxPingRecordPreserveTime.value))
@@ -592,9 +592,9 @@ watch(() => props.uuid, () => {
   fetchRecords()
 })
 
-// Snapshots replace the node; live ticks keep its identity. Start before replayed samples arrive.
-watch(nodeInfo, (node, previous) => {
-  if (node && previous?.uuid === node.uuid)
+// 仅在断线重连 / 前台恢复同步时重拉历史，避免首页进详情页重复请求
+watch(() => nodesStore.resyncVersion, () => {
+  if (nodeInfo.value)
     fetchRecords()
 }, { flush: 'sync' })
 
@@ -644,7 +644,7 @@ onBeforeUnmount(() => fetchRequestId++)
     </Tabs>
 
     <!-- 内容区域 -->
-    <Spinner :show="loading" content-class="flex flex-col gap-4">
+    <Spinner :show="loading" class="flex flex-col gap-4">
       <div v-if="error" class="text-red-500 py-8 text-center">
         {{ error }}
       </div>
@@ -660,26 +660,29 @@ onBeforeUnmount(() => fetchRequestId++)
         >
           <div
             v-for="task in latestValues" :key="task.id"
-            role="button" tabindex="0" :aria-pressed="selectedTaskIds.includes(task.id)"
             class="flex cursor-pointer select-none items-center gap-3 rounded-md p-2 transition-all bg-background/60 hover:bg-background hover:shadow-[0_0_0_1px] hover:shadow-emerald-600/10"
             :class="[
               !selectedTaskIds.includes(task.id) && 'opacity-30',
             ]"
             @click="toggleTask(task.id)"
-            @keydown.enter.self.prevent="toggleTask(task.id)"
-            @keydown.space.self.prevent="toggleTask(task.id)"
           >
             <div class="flex-1 min-w-0">
               <div class="flex gap-2 items-center">
-                <div class="rounded h-4 w-1" :style="{ backgroundColor: task.color }" />
-                <span class="text-sm font-semibold truncate">{{ task.name }}</span>
+                <div class="rounded h-4 w-1 shrink-0" :style="{ backgroundColor: task.color }" />
+                <button
+                  type="button" :aria-pressed="selectedTaskIds.includes(task.id)"
+                  class="min-w-0 cursor-pointer truncate rounded-sm text-left text-sm font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  @click.stop="toggleTask(task.id)"
+                >
+                  {{ task.name }}
+                </button>
                 <div class="flex-1" />
                 <DataTooltip placement="left" content-class="!rounded p-3 w-60 backdrop-blur">
                   <Button variant="ghost" size="icon-xs" class="text-slate-500" :aria-label="`${task.name}线路统计`" @click.stop>
                     <Icon icon="carbon:information" :width="14" :height="14" />
                   </Button>
                   <template #content>
-                    <div class="text-xs gap-x-4 gap-y-1.5 grid grid-cols-4">
+                    <div class="text-xs gap-x-4 gap-y-1.5 grid grid-cols-4 tabular-nums">
                       <template v-if="task.min !== undefined">
                         <span class="text-muted-foreground">最小</span>
                         <span class="font-medium">{{ Math.round(task.min) }} ms</span>
@@ -695,6 +698,10 @@ onBeforeUnmount(() => fetchRequestId++)
                       <template v-if="task.latest !== undefined || task.timedOut">
                         <span class="text-muted-foreground">最新</span>
                         <span class="font-medium">{{ task.timedOut ? '超时' : `${Math.round(task.latest!)} ms` }}</span>
+                      </template>
+                      <template v-if="task.loss !== undefined">
+                        <span class="text-muted-foreground">丢包</span>
+                        <span class="font-medium">{{ task.loss.toFixed(2) }}%</span>
                       </template>
                       <template v-if="task.p50 !== undefined">
                         <span class="text-muted-foreground">P50</span>
@@ -720,35 +727,35 @@ onBeforeUnmount(() => fetchRequestId++)
                   </template>
                 </DataTooltip>
               </div>
-              <div class="text-xs mt-1 flex gap-1.5 items-center text-muted-foreground">
+              <div class="text-xs mt-1 flex gap-1.5 items-center text-muted-foreground tabular-nums">
                 <DataTooltip
-                  v-if="task.timedOut" as="span" placement="cursor" touch-behavior="passthrough" content="最新探测" tabindex="0"
-                  class="text-rose-500 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  v-if="task.timedOut" as="span" placement="cursor" touch-behavior="passthrough" content="最新探测"
+                  class="text-rose-500 rounded-sm"
                 >
-                  超时 ·
+                  <span class="sr-only">最新探测 </span>超时 ·
                 </DataTooltip>
                 <DataTooltip
-                  as="span" placement="cursor" touch-behavior="passthrough" content="平均延迟" tabindex="0"
-                  class="font-medium rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  as="span" placement="cursor" touch-behavior="passthrough" content="平均延迟"
+                  class="font-medium rounded-sm"
                 >
-                  {{ task.avg !== undefined ? `${Math.round(task.avg)}ms` : '-' }}
+                  <span class="sr-only">平均延迟 </span>{{ task.avg !== undefined ? `${Math.round(task.avg)}ms` : '-' }}
                 </DataTooltip>
                 <template v-if="task.loss !== undefined">
-                  <span class="opacity-60">·</span>
+                  <span class="opacity-60" aria-hidden="true">·</span>
                   <DataTooltip
-                    as="span" placement="cursor" touch-behavior="passthrough" content="丢包率" tabindex="0"
-                    class="rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    as="span" placement="cursor" touch-behavior="passthrough" content="丢包率"
+                    class="rounded-sm"
                   >
-                    {{ task.loss.toFixed(2) }}%
+                    <span class="sr-only">丢包率 </span>{{ task.loss.toFixed(2) }}%
                   </DataTooltip>
                 </template>
                 <template v-if="task.p99_p50_ratio !== undefined">
-                  <span class="opacity-60">·</span>
+                  <span class="opacity-60" aria-hidden="true">·</span>
                   <DataTooltip
-                    as="span" placement="cursor" touch-behavior="passthrough" content="波动率" tabindex="0"
-                    class="rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    as="span" placement="cursor" touch-behavior="passthrough" content="波动率"
+                    class="rounded-sm"
                   >
-                    {{ task.p99_p50_ratio.toFixed(2) }}
+                    <span class="sr-only">波动率 </span>{{ task.p99_p50_ratio.toFixed(2) }}
                   </DataTooltip>
                 </template>
               </div>

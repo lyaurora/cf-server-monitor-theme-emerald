@@ -15,7 +15,6 @@ import { useNodesStore } from '@/stores/nodes'
 import { fetchLoadHistory } from '@/utils/api'
 import { DEFAULT_CHART_TIME_RANGE, getAvailableChartTimeRanges } from '@/utils/chartTimeRange'
 import { formatBytes, formatBytesSplit } from '@/utils/helper'
-import { fillMissingTimePoints } from '@/utils/recordHelper'
 
 const props = defineProps<{
   uuid: string
@@ -27,8 +26,8 @@ const appStore = useAppStore()
 const { pickSurfaceClass } = useBackgroundSurface()
 const nodesStore = useNodesStore()
 
-// 从 publicSettings 获取记录保留时间
-const maxRecordPreserveTime = computed(() => appStore.publicSettings?.record_preserve_time || 720)
+// 从 publicSettings 获取记录保留时间（未加载完成前按匿名上限 24 小时兜底）
+const maxRecordPreserveTime = computed(() => appStore.publicSettings?.record_preserve_time || 24)
 
 const { chartThemeColors, baseTooltipConfig } = useChartTheme()
 
@@ -88,28 +87,65 @@ const nodeInfo = computed(() => nodesStore.nodesByUuid.get(props.uuid))
 
 // ==================== 数据获取 ====================
 
-function statusToRecordFormat(records: StatusRecord[]): RecordFormat[] {
-  return records.map(r => ({
-    client: r.client,
-    time: r.time,
-    cpu: r.cpu ?? null,
-    gpu: r.gpu ?? null,
-    ram: r.ram ?? null,
-    ram_total: r.ram_total ?? null,
-    swap: r.swap ?? null,
-    swap_total: r.swap_total ?? null,
-    load: r.load ?? null,
-    temp: r.temp ?? null,
-    disk: r.disk ?? null,
-    disk_total: r.disk_total ?? null,
-    net_in: r.net_in ?? null,
-    net_out: r.net_out ?? null,
-    net_total_up: r.net_total_up ?? null,
-    net_total_down: r.net_total_down ?? null,
-    process: r.process ?? null,
-    connections: r.connections ?? null,
-    connections_udp: r.connections_udp ?? null,
-  }))
+interface TimedRecordFormat extends RecordFormat {
+  timeMs: number
+}
+
+function createGapBreakRecord(client: string, timeMs: number): TimedRecordFormat {
+  return {
+    client,
+    time: new Date(timeMs).toISOString(),
+    timeMs,
+    cpu: null,
+    gpu: null,
+    ram: null,
+    ram_total: null,
+    swap: null,
+    swap_total: null,
+    load: null,
+    temp: null,
+    disk: null,
+    disk_total: null,
+    net_in: null,
+    net_out: null,
+    net_total_up: null,
+    net_total_down: null,
+    process: null,
+    connections: null,
+    connections_udp: null,
+  }
+}
+
+function statusToRecordFormat(records: StatusRecord[]): TimedRecordFormat[] {
+  const result: TimedRecordFormat[] = []
+  for (const r of records) {
+    const timeMs = Date.parse(r.time)
+    if (!Number.isFinite(timeMs))
+      continue
+    result.push({
+      client: r.client,
+      time: r.time,
+      timeMs,
+      cpu: r.cpu ?? null,
+      gpu: r.gpu ?? null,
+      ram: r.ram ?? null,
+      ram_total: r.ram_total ?? null,
+      swap: r.swap ?? null,
+      swap_total: r.swap_total ?? null,
+      load: r.load ?? null,
+      temp: r.temp ?? null,
+      disk: r.disk ?? null,
+      disk_total: r.disk_total ?? null,
+      net_in: r.net_in ?? null,
+      net_out: r.net_out ?? null,
+      net_total_up: r.net_total_up ?? null,
+      net_total_down: r.net_total_down ?? null,
+      process: r.process ?? null,
+      connections: r.connections ?? null,
+      connections_udp: r.connections_udp ?? null,
+    })
+  }
+  return result
 }
 
 // 实时视图只保留所选时间窗内的数据，避免长时间驻留后横向漂移；以最后一条数据点为锚，避免时钟偏差
@@ -217,28 +253,29 @@ async function fetchData() {
 
 // ==================== 数据处理 ====================
 
-const chartData = computed(() => {
+const chartData = computed<TimedRecordFormat[]>(() => {
   const data = statusToRecordFormat(remoteData.value)
-  if (!data.length)
-    return []
-
-  if (isRealtime.value) {
+  if (data.length < 2)
     return data
+
+  // 保留后端返回的全部真实采样点，仅在明显断档中点插入 null 断点以便 connectNulls=false 断开折线
+  const hours = selectedHours.value || DEFAULT_CHART_TIME_RANGE.hours
+  const longHistoryPoints = appStore.publicSettings?.long_history_points || 120
+  const expectedStepMs = isRealtime.value
+    ? 60_000
+    : (hours * 3_600_000) / longHistoryPoints
+  const gapThresholdMs = Math.max(expectedStepMs * 2.5, 5 * 60_000)
+
+  const withGaps: TimedRecordFormat[] = [data[0]!]
+  for (let i = 1; i < data.length; i++) {
+    const prev = data[i - 1]!
+    const curr = data[i]!
+    if (curr.timeMs - prev.timeMs > gapThresholdMs) {
+      withGaps.push(createGapBreakRecord(prev.client, Math.floor((prev.timeMs + curr.timeMs) / 2)))
+    }
+    withGaps.push(curr)
   }
-
-  const hours = selectedHours.value
-  const minute = 60
-  const hour = minute * 60
-
-  // 7D 长档位用 1 小时网格，其余历史档位用 15 分钟网格
-  const intervalSec = hours > 120
-    ? hour
-    : minute * 15
-  const maxGap = hours > 120
-    ? hour * 2
-    : minute * 30
-
-  return fillMissingTimePoints(data, intervalSec, hours * 3600, maxGap)
+  return withGaps
 })
 
 const latestStatus = computed(() => {
@@ -252,8 +289,8 @@ const latestFormatted = computed(() => ({
   ram: latestStatus.value?.ram != null
     ? formatBytesSplit(latestStatus.value.ram)
     : null,
-  memTotal: nodeInfo.value?.mem_total
-    ? formatBytesSplit(nodeInfo.value.mem_total)
+  memTotal: (nodeInfo.value?.mem_total || latestStatus.value?.ram_total)
+    ? formatBytesSplit(nodeInfo.value?.mem_total || latestStatus.value?.ram_total || 0)
     : null,
   swap: latestStatus.value?.swap != null
     ? formatBytesSplit(latestStatus.value.swap)
@@ -264,8 +301,8 @@ const latestFormatted = computed(() => ({
   disk: latestStatus.value?.disk != null
     ? formatBytesSplit(latestStatus.value.disk)
     : null,
-  diskTotal: nodeInfo.value?.disk_total
-    ? formatBytesSplit(nodeInfo.value.disk_total)
+  diskTotal: (nodeInfo.value?.disk_total || latestStatus.value?.disk_total)
+    ? formatBytesSplit(nodeInfo.value?.disk_total || latestStatus.value?.disk_total || 0)
     : null,
   netOut: latestStatus.value?.net_out != null
     ? formatBytesSplit(latestStatus.value.net_out)
@@ -277,7 +314,7 @@ const latestFormatted = computed(() => ({
 
 // ==================== 工具函数 ====================
 
-function formatTime(time: string, showDate: boolean): string {
+function formatTime(time: number, showDate: boolean): string {
   const date = dayjs(time)
   if (showDate) {
     return date.format('M/D HH:mm')
@@ -286,24 +323,37 @@ function formatTime(time: string, showDate: boolean): string {
 }
 
 const showDateInAxis = computed(() => (selectedHours.value || 1) >= 24)
+const showSinglePointSymbol = computed(() => chartData.value.length === 1)
 
-// 通用 X 轴配置
-const baseXAxisConfig = computed(() => ({
-  type: 'category' as const,
-  data: chartData.value.map(r => formatTime(r.time, showDateInAxis.value)),
-  axisLabel: {
-    fontSize: 11,
-    color: chartThemeColors.value.textSecondary,
-    margin: 12,
-    hideOverlap: true,
-  },
-  axisLine: {
-    show: true,
-    lineStyle: { color: chartThemeColors.value.borderColor, width: 1 },
-  },
-  axisTick: { show: false },
-  boundaryGap: false,
-}))
+// 通用 X 轴配置（使用真实时间戳，完整保留后端采样精度）
+const baseXAxisConfig = computed(() => {
+  const data = chartData.value
+  const firstTime = data[0]?.timeMs
+  const lastTime = data.at(-1)?.timeMs
+  const isSinglePoint = firstTime !== undefined && firstTime === lastTime
+  return {
+    type: 'time' as const,
+    min: isSinglePoint
+      ? firstTime - 60_000
+      : firstTime,
+    max: isSinglePoint
+      ? lastTime + 60_000
+      : lastTime,
+    axisLabel: {
+      formatter: (value: number) => formatTime(value, showDateInAxis.value),
+      fontSize: 11,
+      color: chartThemeColors.value.textSecondary,
+      margin: 12,
+      hideOverlap: true,
+    },
+    axisLine: {
+      show: true,
+      lineStyle: { color: chartThemeColors.value.borderColor, width: 1 },
+    },
+    axisTick: { show: false },
+    boundaryGap: false,
+  }
+})
 
 // 通用 Y 轴配置
 const baseYAxisConfig = computed(() => ({
@@ -337,7 +387,7 @@ const cpuChartOption = computed(() => ({
   tooltip: {
     ...baseTooltipConfig.value,
     formatter: (params: unknown) => {
-      const p = (params as Array<{ dataIndex: number, seriesName: string, value: number, color: string }>).filter(item => Number.isFinite(item.value))
+      const p = (params as Array<{ dataIndex: number, seriesName: string, value: [number, number | null], color: string }>).filter(item => Number.isFinite(item.value?.[1]))
       if (!p.length)
         return ''
       const firstParam = p[0]
@@ -352,11 +402,12 @@ const cpuChartOption = computed(() => ({
       html += '<div style="display:flex;flex-direction:column;gap:4px">'
 
       for (const item of p) {
+        const val = item.value[1]
         if (item.seriesName === 'CPU') {
-          html += renderTooltipRow(item.color, 'CPU', `${item.value?.toFixed(1) ?? '-'}%`)
+          html += renderTooltipRow(item.color, 'CPU', `${val?.toFixed(1) ?? '-'}%`)
         }
         else if (item.seriesName === '负载') {
-          html += renderTooltipRow(item.color, '系统负载', `${item.value?.toFixed(2) ?? '-'}`)
+          html += renderTooltipRow(item.color, '系统负载', `${val?.toFixed(2) ?? '-'}`)
         }
       }
       html += '</div>'
@@ -392,9 +443,10 @@ const cpuChartOption = computed(() => ({
     {
       name: 'CPU',
       type: 'line',
-      data: chartData.value.map(r => r.cpu),
+      data: chartData.value.map(r => [r.timeMs, r.cpu]),
 
-      showSymbol: false,
+      showSymbol: showSinglePointSymbol.value,
+      connectNulls: false,
       yAxisIndex: 0,
       lineStyle: { width: 1.5, color: chartColors.primary, cap: 'round' as const },
       areaStyle: {
@@ -414,9 +466,10 @@ const cpuChartOption = computed(() => ({
     {
       name: '负载',
       type: 'line',
-      data: chartData.value.map(r => r.load),
+      data: chartData.value.map(r => [r.timeMs, r.load]),
 
-      showSymbol: false,
+      showSymbol: showSinglePointSymbol.value,
+      connectNulls: false,
       yAxisIndex: 1,
       lineStyle: { width: 1.5, color: chartColors.secondary, cap: 'round' as const },
     },
@@ -430,7 +483,7 @@ const memoryChartOption = computed(() => ({
   tooltip: {
     ...baseTooltipConfig.value,
     formatter: (params: unknown) => {
-      const p = (params as Array<{ dataIndex: number, seriesName: string, value: number, color: string }>).filter(item => Number.isFinite(item.value))
+      const p = (params as Array<{ dataIndex: number, seriesName: string, value: [number, number | null], color: string }>).filter(item => Number.isFinite(item.value?.[1]))
       if (!p.length)
         return ''
       const firstParam = p[0]
@@ -441,7 +494,7 @@ const memoryChartOption = computed(() => ({
         return ''
 
       const ramUsed = record.ram ?? 0
-      const ramTotal = record.ram_total ?? nodeInfo.value?.mem_total ?? 0
+      const ramTotal = record.ram_total || nodeInfo.value?.mem_total || 0
       const swapUsed = record.swap ?? 0
       const swapTotal = record.swap_total ?? nodeInfo.value?.swap_total
       const ramPercent = ramTotal > 0
@@ -487,9 +540,10 @@ const memoryChartOption = computed(() => ({
     {
       name: 'RAM',
       type: 'line',
-      data: chartData.value.map(r => r.ram),
+      data: chartData.value.map(r => [r.timeMs, r.ram]),
 
-      showSymbol: false,
+      showSymbol: showSinglePointSymbol.value,
+      connectNulls: false,
       lineStyle: { width: 1.5, color: chartColors.primary, cap: 'round' as const },
       areaStyle: {
         color: {
@@ -508,9 +562,10 @@ const memoryChartOption = computed(() => ({
     {
       name: 'Swap',
       type: 'line',
-      data: chartData.value.map(r => r.swap),
+      data: chartData.value.map(r => [r.timeMs, r.swap]),
 
-      showSymbol: false,
+      showSymbol: showSinglePointSymbol.value,
+      connectNulls: false,
       lineStyle: { width: 1.5, color: chartColors.secondary, cap: 'round' as const },
     },
   ],
@@ -523,7 +578,7 @@ const diskChartOption = computed(() => ({
   tooltip: {
     ...baseTooltipConfig.value,
     formatter: (params: unknown) => {
-      const p = (params as Array<{ dataIndex: number, value: number, color: string }>).filter(item => Number.isFinite(item.value))
+      const p = (params as Array<{ dataIndex: number, value: [number, number | null], color: string }>).filter(item => Number.isFinite(item.value?.[1]))
       if (!p.length)
         return ''
       const firstParam = p[0]
@@ -534,7 +589,7 @@ const diskChartOption = computed(() => ({
         return ''
 
       const diskUsed = record.disk ?? 0
-      const diskTotal = record.disk_total ?? nodeInfo.value?.disk_total ?? 0
+      const diskTotal = record.disk_total || nodeInfo.value?.disk_total || 0
       const diskPercent = diskTotal > 0
         ? ((diskUsed / diskTotal) * 100).toFixed(1)
         : '0'
@@ -565,8 +620,9 @@ const diskChartOption = computed(() => ({
     {
       name: '磁盘已用',
       type: 'line',
-      data: chartData.value.map(r => r.disk),
-      showSymbol: false,
+      data: chartData.value.map(r => [r.timeMs, r.disk]),
+      showSymbol: showSinglePointSymbol.value,
+      connectNulls: false,
       lineStyle: { width: 1.5, color: chartColors.tertiary, cap: 'round' as const },
       areaStyle: {
         color: {
@@ -592,7 +648,7 @@ const networkChartOption = computed(() => ({
   tooltip: {
     ...baseTooltipConfig.value,
     formatter: (params: unknown) => {
-      const p = (params as Array<{ dataIndex: number, seriesName: string, value: number, color: string }>).filter(item => Number.isFinite(item.value))
+      const p = (params as Array<{ dataIndex: number, seriesName: string, value: [number, number | null], color: string }>).filter(item => Number.isFinite(item.value?.[1]))
       if (!p.length)
         return ''
       const firstParam = p[0]
@@ -610,7 +666,7 @@ const networkChartOption = computed(() => ({
         const label = item.seriesName === '下载'
           ? '↓ 下载'
           : '↑ 上传'
-        html += renderTooltipRow(item.color, label, `${formatBytes(item.value)}/s`)
+        html += renderTooltipRow(item.color, label, `${formatBytes(item.value[1]!)}/s`)
       }
       html += '</div>'
       return html
@@ -643,17 +699,19 @@ const networkChartOption = computed(() => ({
     {
       name: '下载',
       type: 'line',
-      data: chartData.value.map(r => r.net_in),
+      data: chartData.value.map(r => [r.timeMs, r.net_in]),
 
-      showSymbol: false,
+      showSymbol: showSinglePointSymbol.value,
+      connectNulls: false,
       lineStyle: { width: 1.5, color: chartColors.quinary, cap: 'round' as const },
     },
     {
       name: '上传',
       type: 'line',
-      data: chartData.value.map(r => r.net_out),
+      data: chartData.value.map(r => [r.timeMs, r.net_out]),
 
-      showSymbol: false,
+      showSymbol: showSinglePointSymbol.value,
+      connectNulls: false,
       lineStyle: { width: 1.5, color: chartColors.quaternary, cap: 'round' as const },
     },
   ],
@@ -666,7 +724,7 @@ const connectionsChartOption = computed(() => ({
   tooltip: {
     ...baseTooltipConfig.value,
     formatter: (params: unknown) => {
-      const p = (params as Array<{ dataIndex: number, seriesName: string, value: number, color: string }>).filter(item => Number.isFinite(item.value))
+      const p = (params as Array<{ dataIndex: number, seriesName: string, value: [number, number | null], color: string }>).filter(item => Number.isFinite(item.value?.[1]))
       if (!p.length)
         return ''
       const firstParam = p[0]
@@ -681,8 +739,8 @@ const connectionsChartOption = computed(() => ({
       html += '<div style="display:flex;flex-direction:column;gap:4px">'
 
       for (const item of p) {
-        const displayValue = item.value != null
-          ? String(Math.round(item.value))
+        const displayValue = item.value[1] != null
+          ? String(Math.round(item.value[1]))
           : '-'
         html += renderTooltipRow(item.color, item.seriesName, displayValue)
       }
@@ -718,17 +776,19 @@ const connectionsChartOption = computed(() => ({
     {
       name: 'TCP',
       type: 'line',
-      data: chartData.value.map(r => r.connections),
+      data: chartData.value.map(r => [r.timeMs, r.connections]),
 
-      showSymbol: false,
+      showSymbol: showSinglePointSymbol.value,
+      connectNulls: false,
       lineStyle: { width: 1.5, color: chartColors.primary, cap: 'round' as const },
     },
     {
       name: 'UDP',
       type: 'line',
-      data: chartData.value.map(r => r.connections_udp),
+      data: chartData.value.map(r => [r.timeMs, r.connections_udp]),
 
-      showSymbol: false,
+      showSymbol: showSinglePointSymbol.value,
+      connectNulls: false,
       lineStyle: { width: 1.5, color: chartColors.tertiary, cap: 'round' as const },
     },
   ],
@@ -741,7 +801,7 @@ const processChartOption = computed(() => ({
   tooltip: {
     ...baseTooltipConfig.value,
     formatter: (params: unknown) => {
-      const p = (params as Array<{ dataIndex: number, value: number, color: string }>).filter(item => Number.isFinite(item.value))
+      const p = (params as Array<{ dataIndex: number, value: [number, number | null], color: string }>).filter(item => Number.isFinite(item.value?.[1]))
       if (!p.length)
         return ''
       const firstParam = p[0]
@@ -752,8 +812,8 @@ const processChartOption = computed(() => ({
         return ''
 
       const timeStr = formatChartTooltipTime(record.time, selectedHours.value || 1)
-      const displayValue = firstParam.value != null
-        ? String(Math.round(firstParam.value))
+      const displayValue = firstParam.value[1] != null
+        ? String(Math.round(firstParam.value[1]))
         : '-'
 
       let html = `<div style="font-weight:600;margin-bottom:6px;color:${chartThemeColors.value.textSecondary}">${timeStr}</div>`
@@ -782,9 +842,10 @@ const processChartOption = computed(() => ({
     {
       name: '进程数',
       type: 'line',
-      data: chartData.value.map(r => r.process),
+      data: chartData.value.map(r => [r.timeMs, r.process]),
 
-      showSymbol: false,
+      showSymbol: showSinglePointSymbol.value,
+      connectNulls: false,
       lineStyle: { width: 1.5, color: chartColors.quaternary, cap: 'round' as const },
       areaStyle: {
         color: {
@@ -805,9 +866,9 @@ const processChartOption = computed(() => ({
 
 // 生命周期 ====================
 
-// Snapshots replace the node; live ticks keep its identity. Start before replayed samples arrive.
-watch(nodeInfo, (node, previous) => {
-  if (node && previous?.uuid === node.uuid)
+// 仅在断线重连 / 前台恢复同步时重拉历史，避免首页进详情页重复请求
+watch(() => nodesStore.resyncVersion, () => {
+  if (nodeInfo.value)
     fetchData()
 }, { flush: 'sync' })
 
@@ -868,7 +929,7 @@ onBeforeUnmount(() => fetchRequestId++)
           <template #header>
             <div class="flex items-center justify-between">
               <span class="text-base font-bold">CPU</span>
-              <div v-if="latestStatus?.cpu != null" class="text-xs flex gap-0.5 items-baseline">
+              <div v-if="latestStatus?.cpu != null" class="text-xs flex gap-0.5 items-baseline tabular-nums">
                 <span>{{ latestStatus.cpu.toFixed(1) }}</span>
                 <span>%</span>
               </div>
@@ -889,7 +950,7 @@ onBeforeUnmount(() => fetchRequestId++)
           <template #header>
             <div class="flex items-center justify-between">
               <span class="text-base font-bold">内存</span>
-              <div class="text-xs flex gap-1 items-baseline">
+              <div class="text-xs flex gap-1 items-baseline tabular-nums">
                 <template v-if="latestFormatted.ram">
                   <span>{{ latestFormatted.ram.value }}</span>
                   <span>{{ latestFormatted.ram.unit }}</span>
@@ -905,7 +966,7 @@ onBeforeUnmount(() => fetchRequestId++)
             </div>
             <div class="mt-1 flex items-center justify-between text-xs">
               <span class="text-muted-foreground">Swap</span>
-              <div class="flex gap-1 items-baseline">
+              <div class="flex gap-1 items-baseline tabular-nums">
                 <template v-if="latestFormatted.swap">
                   <span>{{ latestFormatted.swap.value }}</span>
                   <span>{{ latestFormatted.swap.unit }}</span>
@@ -934,7 +995,7 @@ onBeforeUnmount(() => fetchRequestId++)
           <template #header>
             <div class="flex items-center justify-between">
               <span class="text-base font-bold">磁盘</span>
-              <div class="text-xs flex gap-1 items-baseline">
+              <div class="text-xs flex gap-1 items-baseline tabular-nums">
                 <template v-if="latestFormatted.disk">
                   <span>{{ latestFormatted.disk.value }}</span>
                   <span>{{ latestFormatted.disk.unit }}</span>
@@ -963,7 +1024,7 @@ onBeforeUnmount(() => fetchRequestId++)
           <template #header>
             <div class="flex items-center justify-between">
               <span class="text-base font-bold">网络</span>
-              <div class="text-xs flex gap-2 items-baseline">
+              <div class="text-xs flex gap-2 items-baseline tabular-nums">
                 <span class="flex flex-row items-center justify-center gap-0.5">
                   <Icon icon="tabler:chevron-up" width="12" height="12" />
                   <template v-if="latestFormatted.netOut">
@@ -997,7 +1058,7 @@ onBeforeUnmount(() => fetchRequestId++)
           <template #header>
             <div class="flex items-center justify-between">
               <span class="text-base font-bold">连接</span>
-              <div class="text-xs flex gap-1 items-baseline">
+              <div class="text-xs flex gap-1 items-baseline tabular-nums">
                 <span>TCP: {{ latestStatus?.connections ?? '-' }}</span>
                 <span>·</span>
                 <span>UDP: {{ latestStatus?.connections_udp ?? '-' }}</span>
@@ -1018,7 +1079,7 @@ onBeforeUnmount(() => fetchRequestId++)
           <template #header>
             <div class="flex items-center justify-between">
               <span class="text-base font-bold">进程</span>
-              <span class="text-xs">
+              <span class="text-xs tabular-nums">
                 {{ latestStatus?.process ?? '-' }}
               </span>
             </div>
