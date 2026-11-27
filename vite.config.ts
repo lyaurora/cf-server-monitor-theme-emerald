@@ -34,6 +34,7 @@ function normalizeOrigin(value: string): string | null {
   }
 }
 
+const ECHARTS_MAP_CHUNK_RE = /[/\\]node_modules[/\\]echarts[/\\]lib[/\\](?:chart[/\\](?:map|scatter)|component[/\\]geo|coord[/\\]geo|component[/\\]helper[/\\](?:MapDraw|RoamController|roamHelper|cursorHelper))/
 const ECHARTS_CHUNK_RE = /[/\\]node_modules[/\\](?:echarts|zrender|vue-echarts)[/\\]/
 const REKA_UI_CHUNK_RE = /[/\\]node_modules[/\\]reka-ui[/\\]/
 const VUEUSE_CHUNK_RE = /[/\\]node_modules[/\\]@vueuse[/\\]/
@@ -109,7 +110,7 @@ export default defineConfig(({ mode }) => {
               },
               {
                 name: 'echarts',
-                test: ECHARTS_CHUNK_RE,
+                test: id => ECHARTS_CHUNK_RE.test(id) && !ECHARTS_MAP_CHUNK_RE.test(id),
                 priority: 10,
               },
             ],

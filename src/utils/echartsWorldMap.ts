@@ -7,12 +7,12 @@ type WorldGeoJson = Exclude<
 >
 
 const WORLD_MAP_NAME = 'cf-server-monitor-world'
-// 世界地图数据源：多 CDN 阶梯竞速回退，避免单一 CDN 故障或阻塞拖慢地图展示
+// 世界地图数据源：优先走 CFSM 默认 CSP 白名单内的源，再阶梯竞速回退其余镜像
 const WORLD_GEO_JSON_URLS = [
+  'https://raw.githubusercontent.com/apache/echarts-www/master/asset/map/json/world.json',
   'https://cdn.jsdelivr.net/gh/apache/echarts-www@master/asset/map/json/world.json',
   'https://fastly.jsdelivr.net/gh/apache/echarts-www@master/asset/map/json/world.json',
   'https://gcore.jsdelivr.net/gh/apache/echarts-www@master/asset/map/json/world.json',
-  'https://raw.githubusercontent.com/apache/echarts-www/master/asset/map/json/world.json',
 ]
 const WORLD_MAP_CACHE_KEY = 'cf-server-monitor-theme-emerald:world-map'
 

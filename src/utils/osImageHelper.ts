@@ -122,7 +122,7 @@ const osConfigs: OSConfig[] = [
   {
     name: 'openSUSE',
     image: 'os-icons/os-openSUSE.svg',
-    keywords: ['opensuse', 'suse'],
+    keywords: ['opensuse', 'open suse', 'suse'],
   },
   {
     name: 'Gentoo',
@@ -176,6 +176,11 @@ const osConfigs: OSConfig[] = [
     name: 'OpenCloudOS',
     image: 'os-icons/os-opencloud.svg',
     keywords: ['opencloud', 'opencloudos', 'opencloud os'],
+  },
+  {
+    name: 'Oracle Linux',
+    image: 'os-icons/os-oracle.svg',
+    keywords: ['oracle', 'oracle linux'],
   },
 ]
 

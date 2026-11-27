@@ -55,7 +55,7 @@
     },
     {
       "key": "earthViewMode",
-      "value": "maps",
+      "value": "earth",
       "options": "earth,earth-stop,maps,cards,hide",
       "description": "earth：自转地球；earth-stop：静止地球；maps：点状地图；cards：仅显示头部卡片；hide：隐藏整个头部"
     },
