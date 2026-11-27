@@ -67,6 +67,7 @@ const offlineTime = computed(() => formatOfflineTime(props.node))
         <div v-if="col.key === 'status'" class="flex justify-center">
           <div class="size-2 rounded-full relative" :class="[node.online ? 'bg-emerald-600' : 'bg-red-600']">
             <div
+              v-if="!appStore.disablePageAnimation"
               class="animate-ping absolute inset-0 rounded-full opacity-50"
               :class="[node.online ? 'bg-emerald-600' : 'bg-red-600']"
             />
@@ -135,7 +136,7 @@ const offlineTime = computed(() => formatOfflineTime(props.node))
         </div>
 
         <!-- CPU -->
-        <div v-else-if="col.key === 'cpu'" class="group" :class="[!node.online && 'blur-sm opacity-30']">
+        <div v-else-if="col.key === 'cpu'" class="group tabular-nums" :class="[!node.online && 'blur-sm opacity-30']">
           <div class="space-y-1">
             <div class="text-[10px] text-muted-foreground truncate">
               <span class="inline group-hover:hidden">
@@ -150,8 +151,8 @@ const offlineTime = computed(() => formatOfflineTime(props.node))
         </div>
 
         <!-- 内存 -->
-        <div v-else-if="col.key === 'mem'" class="group" :class="[!node.online && 'blur-sm opacity-30']">
-          <DataTooltip placement="top" class="block" :disabled="!node.swap">
+        <div v-else-if="col.key === 'mem'" class="group tabular-nums" :class="[!node.online && 'blur-sm opacity-30']">
+          <DataTooltip placement="top" class="block" :disabled="node.swap_total == null || node.swap_total <= 0">
             <div class="space-y-1">
               <div class="text-[10px] text-muted-foreground truncate">
                 <span class="inline group-hover:hidden">
@@ -167,16 +168,16 @@ const offlineTime = computed(() => formatOfflineTime(props.node))
               />
             </div>
             <template #content>
-              <div class="flex items-center justify-between gap-3 whitespace-nowrap">
+              <div class="flex items-center justify-between gap-3 whitespace-nowrap tabular-nums">
                 <span class="text-background/70">Swap</span>
-                <span>{{ formatBytes(node.swap ?? 0) }}</span>
+                <span>{{ formatBytes(node.swap ?? 0) }} / {{ formatBytes(node.swap_total ?? 0) }}</span>
               </div>
             </template>
           </DataTooltip>
         </div>
 
         <!-- 硬盘 -->
-        <div v-else-if="col.key === 'disk'" class="group" :class="[!node.online && 'blur-sm opacity-30']">
+        <div v-else-if="col.key === 'disk'" class="group tabular-nums" :class="[!node.online && 'blur-sm opacity-30']">
           <div class="space-y-1">
             <div class="text-[10px] text-muted-foreground truncate">
               <span class="inline group-hover:hidden">
@@ -194,7 +195,7 @@ const offlineTime = computed(() => formatOfflineTime(props.node))
         </div>
 
         <!-- 流量 -->
-        <div v-else-if="col.key === 'traffic'" class="group" :class="[!node.online && 'blur-sm opacity-30']">
+        <div v-else-if="col.key === 'traffic'" class="group tabular-nums" :class="[!node.online && 'blur-sm opacity-30']">
           <DataTooltip v-if="node.showTraffic !== false" placement="top" class="flex items-center gap-2" content-class="mb-1.5">
             <div class="space-y-1 w-full">
               <div class="text-[10px] text-muted-foreground truncate">
@@ -213,11 +214,11 @@ const offlineTime = computed(() => formatOfflineTime(props.node))
               />
             </div>
             <template #content>
-              <span class="flex flex-row gap-0.5 items-center whitespace-nowrap">
+              <span class="flex flex-row gap-0.5 items-center whitespace-nowrap tabular-nums">
                 <Icon icon="tabler:chevron-up" width="12" height="12" />
                 {{ formatBytes(node.net_monthly_up ?? 0) }}
               </span>
-              <span class="flex flex-row gap-0.5 items-center whitespace-nowrap">
+              <span class="flex flex-row gap-0.5 items-center whitespace-nowrap tabular-nums">
                 <Icon icon="tabler:chevron-down" width="12" height="12" />
                 {{ formatBytes(node.net_monthly_down ?? 0) }}
               </span>
@@ -226,7 +227,7 @@ const offlineTime = computed(() => formatOfflineTime(props.node))
         </div>
 
         <!-- 速率 -->
-        <div v-else-if="col.key === 'rate'" :class="[!node.online && 'blur-sm opacity-30']">
+        <div v-else-if="col.key === 'rate'" class="tabular-nums" :class="[!node.online && 'blur-sm opacity-30']">
           <div class="text-[10px] flex flex-col">
             <span class="text-emerald-600 flex flex-row gap-1 items-center">
               <Icon icon="tabler:chevron-up" width="12" height="12" />

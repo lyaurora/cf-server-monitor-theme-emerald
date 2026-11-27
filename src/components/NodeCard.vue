@@ -33,7 +33,14 @@ const formatBytes = (bytes: number) => formatBytesWithConfig(bytes, appStore.byt
 const formatBytesPerSecond = (bytes: number) => formatBytesPerSecondWithConfig(bytes, appStore.byteDecimals)
 const formatUptime = (seconds: number) => formatUptimeWithFormat(seconds, 'hour')
 const offlineTime = computed(() => formatOfflineTime(props.node))
-const expiredDate = computed(() => formatDateTime(props.node.expired_at, 'YYYY-MM-DD'))
+const expiredDate = computed(() => {
+  if (!props.node.expired_at)
+    return ''
+  const formatted = formatDateTime(props.node.expired_at, 'YYYY-MM-DD')
+  return formatted === '-'
+    ? ''
+    : formatted
+})
 
 const cpuStatus = computed(() => getStatus(props.node.cpu ?? 0))
 const memPercentage = computed(() => (props.node.ram ?? 0) / (props.node.mem_total || 1) * 100)
@@ -99,6 +106,7 @@ function openPingDialog() {
       <div class="flex gap-2 min-w-0 items-center">
         <div class="size-2 rounded-full relative" :class="[props.node.online ? 'bg-emerald-600' : 'bg-red-600']">
           <div
+            v-if="!appStore.disablePageAnimation"
             class="animate-ping absolute inset-0 rounded-full opacity-50"
             :class="[props.node.online ? 'bg-emerald-600' : 'bg-red-600']"
           />
@@ -125,7 +133,7 @@ function openPingDialog() {
 
     <template #default>
       <div class="flex flex-col gap-3">
-        <div class="gap-x-3 gap-y-1 grid grid-cols-2">
+        <div class="gap-x-3 gap-y-1 grid grid-cols-2 tabular-nums">
           <!-- CPU -->
           <div class="flex flex-col gap-1">
             <div class="w-full text-xs flex flex-row justify-between">
@@ -150,14 +158,14 @@ function openPingDialog() {
               <span>{{ memPercentage.toFixed(1) }}%</span>
             </div>
             <ProgressThin :percentage="memPercentage" :status="memStatus" :height="4" />
-            <DataTooltip placement="top" class="block" :disabled="!props.node.swap">
+            <DataTooltip placement="top" class="block" :disabled="props.node.swap_total == null || props.node.swap_total <= 0">
               <div class="text-[11px] text-muted-foreground truncate">
                 {{ formatBytes(props.node.ram ?? 0) }} / {{ formatBytes(props.node.mem_total ?? 0) }}
               </div>
               <template #content>
-                <div class="flex items-center justify-between gap-3 whitespace-nowrap">
+                <div class="flex items-center justify-between gap-3 whitespace-nowrap tabular-nums">
                   <span class="text-background/70">Swap</span>
-                  <span>{{ formatBytes(props.node.swap ?? 0) }}</span>
+                  <span>{{ formatBytes(props.node.swap ?? 0) }} / {{ formatBytes(props.node.swap_total ?? 0) }}</span>
                 </div>
               </template>
             </DataTooltip>
@@ -197,7 +205,7 @@ function openPingDialog() {
                 </template>
               </div>
               <template #content>
-                <div class="flex items-center justify-between gap-3 whitespace-nowrap">
+                <div class="flex items-center justify-between gap-3 whitespace-nowrap tabular-nums">
                   <div class="text-[11px] flex flex-col">
                     <div class="flex flex-row items-center gap-1">
                       <Icon icon="tabler:chevron-up" width="12" height="12" />
@@ -223,7 +231,7 @@ function openPingDialog() {
           </div>
           <div class="flex flex-col gap-y-2" :class="[!props.node.online && 'blur-xs opacity-60 pointer-events-none']">
             <!-- Glassmorphism 的三列双行结构，沿用 Emerald 的格式化与配色。 -->
-            <div class="grid gap-2" :class="middleStatsGridClass">
+            <div class="grid gap-2 tabular-nums" :class="middleStatsGridClass">
               <div class="flex min-w-0 flex-col gap-1">
                 <div class="flex items-center gap-1 text-green-600">
                   <Icon icon="tabler:chevron-up" width="12" height="12" class="shrink-0" />
@@ -245,7 +253,7 @@ function openPingDialog() {
                 </div>
               </div>
               <div v-if="node.showPrice !== false || node.showExpire !== false" class="flex min-w-0 flex-col gap-1">
-                <DataTooltip v-if="node.showExpire !== false" placement="top" :content="expiredDate" class="min-w-0" content-class="whitespace-nowrap">
+                <DataTooltip v-if="node.showExpire !== false" placement="top" :content="expiredDate" :disabled="!expiredDate" class="min-w-0" content-class="whitespace-nowrap">
                   <div class="flex items-center gap-1" :class="remainingTimeTagClass">
                     <Icon icon="tabler:calendar-stats" width="12" height="12" class="shrink-0" />
                     <span class="truncate">{{ expiryText }}</span>
@@ -257,13 +265,13 @@ function openPingDialog() {
                 </div>
               </div>
             </div>
-            <div class="flex items-center justify-between">
+            <div class="flex items-center justify-between tabular-nums">
               <span class="truncate">
                 在线
               </span>
               <div class="border-t-2 border-dotted border-gray-500/10 mx-2 flex-1" />
               <span class="truncate">
-                {{ props.node.uptime > 0 ? formatUptime(props.node.uptime) : '' }}
+                {{ props.node.uptime > 0 ? formatUptime(props.node.uptime) : '--' }}
               </span>
             </div>
             <div class="-mt-1 grid grid-cols-2 gap-x-3 tabular-nums">

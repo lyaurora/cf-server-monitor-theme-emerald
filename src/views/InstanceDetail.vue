@@ -70,6 +70,8 @@ const data = computed(() => nodesStore.nodesByUuid.get(String(route.params.id ??
 const emptyStateDescription = computed(() => {
   if (nodesStore.pageError === 'network')
     return '加载节点失败，正在尝试重连…'
+  if (nodesStore.pageError === 'upgrade')
+    return '后端数据库需要升级，请登录管理后台执行升级'
   if (nodesStore.pageError === 'forbidden')
     return '暂无访问权限或登录已失效'
   return '节点不存在或已被删除'
@@ -178,7 +180,7 @@ const remainingTimeText = computed(() => {
 })
 
 const remainingValueText = computed(() => {
-  if (!data.value)
+  if (!data.value || !data.value.expired_at)
     return '-'
   if (data.value.price_configured === false)
     return '-'
@@ -276,7 +278,9 @@ const systemInfo = computed<InfoItem[]>(() => [
   },
   {
     label: '运行时间',
-    value: formatUptime(data.value?.uptime ?? 0),
+    value: (data.value?.uptime ?? 0) > 0
+      ? formatUptime(data.value!.uptime)
+      : '-',
     icon: 'icon-park-outline:timer',
   },
   {

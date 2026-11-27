@@ -36,6 +36,8 @@ const nodesStore = useNodesStore()
 const router = useRouter()
 const dialogPatternId = useId()
 
+const selectedPingNodeUuid = ref<string | null>(null)
+
 onActivated(() => {
   if (appStore.homeScrollPosition > 0) {
     nextTick(() => {
@@ -46,12 +48,12 @@ onActivated(() => {
 
 onDeactivated(() => {
   appStore.homeScrollPosition = window.scrollY
+  selectedPingNodeUuid.value = null
 })
 
 const searchText = ref('')
 const debouncedSearchText = ref('')
 const showOfflineOnly = ref(false)
-const selectedPingNodeUuid = ref<string | null>(null)
 
 const updateDebouncedSearch = useDebounceFn((value: string) => {
   debouncedSearchText.value = value
@@ -280,7 +282,19 @@ function getNodeItemTransitionStyle(index: number): Record<string, string> {
               @ping-click="handlePingClick"
             />
             <div v-else class="text-muted-foreground text-center py-8">
-              <Empty :description="showOfflineOnly ? '当前范围内没有离线节点' : debouncedSearchText.trim() ? '没有匹配的节点' : '暂无节点'">
+              <Empty
+                :description="nodesStore.pageError === 'upgrade'
+                  ? '后端数据库需要升级，请登录管理后台执行升级'
+                  : nodesStore.pageError === 'forbidden'
+                    ? '暂无访问权限或登录已失效'
+                    : nodesStore.pageError === 'network'
+                      ? '加载节点失败，请检查网络后重试'
+                      : showOfflineOnly
+                        ? '当前范围内没有离线节点'
+                        : debouncedSearchText.trim()
+                          ? '没有匹配的节点'
+                          : '暂无节点'"
+              >
                 <template v-if="showOfflineOnly || debouncedSearchText.trim()" #extra>
                   <Button v-if="showOfflineOnly" variant="outline" size="sm" @click="showOfflineOnly = false">
                     显示全部状态

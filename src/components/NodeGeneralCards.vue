@@ -239,7 +239,7 @@ onMounted(async () => {
           </div>
           <Transition v-bind="metricSwitchTransitionProps">
             <div
-              :key="`memory-${summaryTransitionKey}`" class="flex items-baseline gap-1 min-w-0"
+              :key="`memory-${summaryTransitionKey}`" class="flex items-baseline gap-1 min-w-0 tabular-nums"
               :style="getMetricSwitchStyle(0)"
             >
               <span class="text-base md:text-2xl font-bold leading-none tracking-tight">
@@ -271,7 +271,7 @@ onMounted(async () => {
           </div>
           <Transition v-bind="metricSwitchTransitionProps">
             <div
-              :key="`disk-${summaryTransitionKey}`" class="flex items-baseline gap-1 min-w-0"
+              :key="`disk-${summaryTransitionKey}`" class="flex items-baseline gap-1 min-w-0 tabular-nums"
               :style="getMetricSwitchStyle(1)"
             >
               <span class="text-base md:text-2xl font-bold leading-none tracking-tight">{{ formattedDiskUsed.value
@@ -308,7 +308,7 @@ onMounted(async () => {
             </div>
             <Transition v-bind="metricSwitchTransitionProps">
               <div
-                :key="`remaining-value-${summaryTransitionKey}`" class="flex items-baseline gap-1 min-w-0"
+                :key="`remaining-value-${summaryTransitionKey}`" class="flex items-baseline gap-1 min-w-0 tabular-nums"
                 :style="getMetricSwitchStyle(2)"
               >
                 <span class="text-base md:text-2xl font-bold leading-none tracking-tight">
@@ -324,14 +324,17 @@ onMounted(async () => {
         <CardX
           :id="financePanelId" :inert="!openFinanceCard" :aria-hidden="!openFinanceCard"
           hoverable
-          class="absolute top-0 left-1/2 z-20 h-42 w-[260%] max-w-88 -translate-x-[50%] -translate-y-[25%] rounded-md border-none shadow-[0_0_20px,0_0_0_1px] shadow-emerald-600/10 transition-all"
+          class="absolute top-0 z-20 min-h-42 w-[min(calc(100vw-2rem),22rem)] -translate-y-[25%] rounded-md border-none shadow-[0_0_20px,0_0_0_1px] shadow-emerald-600/10 transition-all"
           :class="[
             pickSurfaceClass('bg-background', 'bg-background/50 backdrop-blur-lg'),
-            openFinanceCard ? 'opacity-100 scale-100  -translate-y-[5%]' : 'opacity-0 pointer-events-none scale-50',
+            showVisualPanel
+              ? 'left-1/2 -translate-x-1/2'
+              : 'right-0 translate-x-0 md:left-1/2 md:right-auto md:-translate-x-1/2',
+            openFinanceCard ? 'opacity-100 scale-100 -translate-y-[5%]' : 'opacity-0 pointer-events-none scale-50',
           ]"
-          content-class="h-full !p-4" @click="closeFinanceCard"
+          content-class="flex flex-1 flex-col !p-4" @click="closeFinanceCard"
         >
-          <div class="flex h-full min-w-0 flex-col overflow-hidden">
+          <div class="flex flex-1 min-w-0 flex-col overflow-hidden">
             <div class="shrink-0 grid grid-cols-3 gap-1.5">
               <div v-for="(item, index) in financeSummaryItems" :key="item.label" class="min-w-0">
                 <div class="flex mb-1.5 items-center text-xs font-medium text-muted-foreground">
@@ -339,7 +342,7 @@ onMounted(async () => {
                 </div>
                 <Transition v-bind="metricSwitchTransitionProps">
                   <div
-                    :key="`remaining-value-${summaryTransitionKey}-${exchangeRateBaseCurrency}`" class="flex min-w-0 items-baseline truncate"
+                    :key="`remaining-value-${summaryTransitionKey}-${exchangeRateBaseCurrency}`" class="flex min-w-0 items-baseline truncate tabular-nums"
                     :style="getMetricSwitchStyle(index)"
                   >
                     <span class="shrink-0 text-xs mr-0.5 font-semibold leading-none text-muted-foreground">
@@ -353,7 +356,7 @@ onMounted(async () => {
               </div>
             </div>
             <div class="flex-1" />
-            <div class="shrink-0 flex flex-col flex-1">
+            <div class="flex flex-col flex-1">
               <div class="flex mb-1 items-center justify-between gap-2">
                 <div class="flex items-center gap-1 text-xs font-medium tracking-wider text-muted-foreground">
                   今日汇率
@@ -369,7 +372,7 @@ onMounted(async () => {
                 </select>
               </div>
               <div class="flex-1" />
-              <div class="grid grid-cols-2 gap-y-1 gap-x-4">
+              <div class="grid grid-cols-2 gap-y-1 gap-x-4 tabular-nums">
                 <div
                   v-for="(row, index) in exchangeRateRows" :key="row.currency"
                   class="text-[11px] flex items-center "
@@ -411,11 +414,11 @@ onMounted(async () => {
           <DataTooltip
             as="span" placement="top"
             :content="`↑ ${formattedTrafficUp.value} ${formattedTrafficUp.unit}\n↓ ${formattedTrafficDown.value} ${formattedTrafficDown.unit}`"
-            class="min-w-0" content-class="whitespace-pre px-2 py-1 left-0 -translate-x-0 leading-normal"
+            class="min-w-0" content-class="whitespace-pre px-2 py-1 left-0 -translate-x-0 leading-normal tabular-nums"
           >
             <Transition v-bind="metricSwitchTransitionProps">
               <div
-                :key="`traffic-${summaryTransitionKey}`" class="flex items-baseline gap-1"
+                :key="`traffic-${summaryTransitionKey}`" class="flex items-baseline gap-1 tabular-nums"
                 :style="getMetricSwitchStyle(3)"
               >
                 <span class="inline-block text-base md:text-2xl font-bold leading-none tracking-tight">
@@ -449,7 +452,7 @@ onMounted(async () => {
           </div>
           <Transition v-bind="metricSwitchTransitionProps">
             <div
-              :key="`speed-up-${summaryTransitionKey}`" class="flex items-baseline gap-1"
+              :key="`speed-up-${summaryTransitionKey}`" class="flex items-baseline gap-1 tabular-nums"
               :style="getMetricSwitchStyle(4)"
             >
               <span class="text-base md:text-2xl font-bold leading-none tracking-tight">{{ formattedSpeedUp.value
@@ -478,7 +481,7 @@ onMounted(async () => {
           </div>
           <Transition v-bind="metricSwitchTransitionProps">
             <div
-              :key="`speed-down-${summaryTransitionKey}`" class="flex items-baseline gap-1"
+              :key="`speed-down-${summaryTransitionKey}`" class="flex items-baseline gap-1 tabular-nums"
               :style="getMetricSwitchStyle(5)"
             >
               <span class="text-base md:text-2xl font-bold leading-none tracking-tight">

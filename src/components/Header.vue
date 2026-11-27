@@ -52,7 +52,10 @@ function handleButtonClick(action: string) {
   }
 }
 
-const sitename = computed(() => appStore.publicSettings?.sitename || 'CF Server Monitor')
+const initialTitle = typeof document !== 'undefined'
+  ? document.title.trim()
+  : ''
+const sitename = computed(() => appStore.publicSettings?.sitename || initialTitle || 'CF Server Monitor')
 </script>
 
 <template>

@@ -31,7 +31,7 @@ const networks = computed(() => pingLines.value.map((key) => {
 </script>
 
 <template>
-  <div class="flex min-w-0 w-full items-center text-[10px]">
+  <div class="flex min-w-0 w-full items-center text-[10px] tabular-nums">
     <template v-if="networks.length">
       <template v-for="(net, index) in networks" :key="net.key">
         <span v-if="index" class="mx-1 text-muted-foreground" aria-hidden="true">·</span>

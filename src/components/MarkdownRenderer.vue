@@ -12,6 +12,7 @@ const ITALIC_ASTERISK_REGEX = /^\*([^*]+)\*/
 const ITALIC_UNDERSCORE_REGEX = /^_([^_]+)_/
 const CODE_REGEX = /^`([^`]+)`/
 const NEXT_SPECIAL_REGEX = /[![*_`\n]/
+const EXPLICIT_HTTP_REGEX = /^https?:\/\//i
 
 interface Token {
   type: 'text' | 'bold' | 'italic' | 'link' | 'image' | 'code' | 'br'
@@ -20,20 +21,29 @@ interface Token {
   alt?: string
 }
 
+function hasUnsafeUrlChar(value: string): boolean {
+  for (let i = 0; i < value.length; i++) {
+    const code = value.charCodeAt(i)
+    if (code <= 0x1F || code === 0x7F || code === 0x5C)
+      return true
+  }
+  return false
+}
+
 function safeUrl(value: string | undefined, image = false): string | undefined {
-  if (!value)
+  const trimmed = value?.trim()
+  if (!trimmed || hasUnsafeUrlChar(trimmed))
     return undefined
   try {
-    const url = new URL(value, 'https://theme.invalid/')
-    return [
-      'http:',
-      'https:',
-      ...(!image
-        ? ['mailto:']
-        : []),
-    ].includes(url.protocol)
-      ? value
-      : undefined
+    const url = new URL(trimmed)
+    if (url.protocol === 'http:' || url.protocol === 'https:') {
+      return EXPLICIT_HTTP_REGEX.test(trimmed)
+        ? url.href
+        : undefined
+    }
+    if (!image && url.protocol === 'mailto:')
+      return url.href
+    return undefined
   }
   catch {
     return undefined
@@ -50,14 +60,22 @@ function parseMarkdown(text: string): Token[] {
   while (remaining.length > 0) {
     const imageMatch = remaining.match(IMAGE_REGEX)
     if (imageMatch) {
-      tokens.push({ type: 'image', alt: imageMatch[1], url: imageMatch[2] })
+      const url = safeUrl(imageMatch[2], true)
+      if (url)
+        tokens.push({ type: 'image', alt: imageMatch[1], url })
+      else if (imageMatch[1])
+        tokens.push({ type: 'text', content: imageMatch[1] })
       remaining = remaining.slice(imageMatch[0].length)
       continue
     }
 
     const linkMatch = remaining.match(LINK_REGEX)
     if (linkMatch) {
-      tokens.push({ type: 'link', content: linkMatch[1], url: linkMatch[2] })
+      const url = safeUrl(linkMatch[2])
+      if (url)
+        tokens.push({ type: 'link', content: linkMatch[1], url })
+      else
+        tokens.push({ type: 'text', content: linkMatch[1] })
       remaining = remaining.slice(linkMatch[0].length)
       continue
     }
@@ -118,7 +136,7 @@ const tokens = computed(() => parseMarkdown(props.content))
     <template v-for="(token, index) in tokens" :key="index">
       <img
         v-if="token.type === 'image'"
-        :src="safeUrl(token.url, true)"
+        :src="token.url"
         :alt="token.alt"
         loading="lazy"
         class="align-middle h-auto max-w-full inline-block rounded"
@@ -126,7 +144,7 @@ const tokens = computed(() => parseMarkdown(props.content))
       >
       <a
         v-else-if="token.type === 'link'"
-        :href="safeUrl(token.url)"
+        :href="token.url"
         target="_blank"
         rel="noopener noreferrer"
         class="text-primary underline-offset-4 hover:underline"
