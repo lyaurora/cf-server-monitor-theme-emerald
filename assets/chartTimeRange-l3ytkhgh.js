@@ -1,0 +1,1 @@
+var e={label:`1H`,hours:1},t=[e,{label:`6H`,hours:6},{label:`12H`,hours:12},{label:`24H`,hours:24},{label:`2D`,hours:48},{label:`4D`,hours:96},{label:`7D`,hours:168}];function n(e){return t.filter(t=>t.hours<=e)}export{n,e as t};
