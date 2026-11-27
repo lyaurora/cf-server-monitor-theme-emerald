@@ -9,8 +9,6 @@ export interface PingHistoryPoint extends PingWindowPoint {
   timeMs: number
 }
 
-export const PING_HISTORY_WINDOW_MS = 2 * 3_600_000
-
 /** 节点完整信息（合并 Client 和 Status） */
 export interface NodeData extends Client, StatusData {
   pingSample?: PingSample
@@ -31,6 +29,8 @@ interface PingHistoryConfig {
   points: number
   /** latency_window.hours：窗口时长（小时），桶长 = hours / points */
   hours: number
+  /** 首页小图渲染柱数（旧后端未返回 latency_window.points 时默认 20） */
+  barCount: number
 }
 
 const PING_HISTORY_DEFAULTS: PingHistoryConfig = {
@@ -38,6 +38,7 @@ const PING_HISTORY_DEFAULTS: PingHistoryConfig = {
   showThreeNetDetails: true,
   points: 60,
   hours: 2,
+  barCount: 20,
 }
 
 const useNodesStore = defineStore('nodes', () => {
@@ -50,7 +51,9 @@ const useNodesStore = defineStore('nodes', () => {
     scheduler: cb => useIntervalFn(cb, 60_000),
   })
   const pageLoading = ref(false)
-  const pageError = ref<'not-found' | 'forbidden' | 'network' | null>(null)
+  const pageError = ref<'not-found' | 'forbidden' | 'upgrade' | 'network' | null>(null)
+  const resyncVersion = ref(0)
+  const hasFullNodeList = ref(false)
   const pingHistoryConfig = ref<PingHistoryConfig>({ ...PING_HISTORY_DEFAULTS })
   let lastEarthSnapshotAt = 0
 
@@ -75,7 +78,12 @@ const useNodesStore = defineStore('nodes', () => {
 
   /** 后端 show_three_net_details：false 时卡片/列表隐藏三网延迟丢包信息 */
   const showThreeNetDetails = computed(() => pingHistoryConfig.value.showThreeNetDetails)
-  const pingSampleIntervalMs = computed(() => pingHistoryBucketMs())
+  const pingHistoryWindowMs = computed(() => Math.max(1, Math.round(pingHistoryConfig.value.hours * 3_600_000)))
+  const pingHistoryBarCount = computed(() => pingHistoryConfig.value.barCount)
+  const pingSampleIntervalMs = computed(() => Math.max(
+    pingHistoryBucketMs(),
+    Math.round(pingHistoryWindowMs.value / pingHistoryBarCount.value),
+  ))
 
   // ===== 方法 =====
 
@@ -145,7 +153,8 @@ const useNodesStore = defineStore('nodes', () => {
   }
 
   function historyCutoff(): number {
-    return Date.now() - PING_HISTORY_WINDOW_MS - pingHistoryBucketMs() * 4
+    // 预留 60s 缓冲以吸收 pingNow 每分钟节拍与 Date.now() 的偏差，避免提前裁掉首柱延续点。
+    return Date.now() - pingHistoryWindowMs.value - Math.max(pingSampleIntervalMs.value * 2, 5 * 60_000) - 60_000
   }
 
   /** 当前配置下的窗口桶长（毫秒）；points/hours 无效时回退默认值 */
@@ -159,17 +168,26 @@ const useNodesStore = defineStore('nodes', () => {
    * 缺省字段保持默认值（兼容旧后端）。
    */
   function configurePingHistory(config: Partial<PingHistoryConfig>): void {
-    const points = Number.isFinite(config.points) && (config.points ?? 0) > 0
-      ? Math.round(config.points!)
+    const hasValidPoints = Number.isFinite(config.points) && (config.points ?? 0) > 0
+    const points = hasValidPoints
+      ? Math.max(1, Math.round(config.points!))
       : pingHistoryConfig.value.points
     const hours = Number.isFinite(config.hours) && (config.hours ?? 0) > 0
       ? config.hours!
       : pingHistoryConfig.value.hours
+    const barCount = hasValidPoints
+      ? Math.max(1, Math.min(30, points))
+      : pingHistoryConfig.value.barCount
     pingHistoryConfig.value = {
       showThreeNetDetails: config.showThreeNetDetails ?? pingHistoryConfig.value.showThreeNetDetails,
       points,
       hours,
+      barCount,
     }
+  }
+
+  function notifyResync(): void {
+    resyncVersion.value++
   }
 
   /** 保留真实采样时间，避免把一分钟实测与数分钟窗口桶等权混算。 */
@@ -207,11 +225,15 @@ const useNodesStore = defineStore('nodes', () => {
           ? entry.loss
           : null
         : previous?.loss ?? null
+      const timedOut = (Number.isFinite(entry.latest) && entry.latest < 0) || loss === 100
       lines[key] = {
-        latency: loss === 100
+        latency: timedOut
           ? null
           : latency,
         loss,
+        ...(timedOut
+          ? { timedOut: true }
+          : {}),
       }
     }
     const point = { time: status.time, timeMs: sampleTime, lines }
@@ -313,6 +335,9 @@ const useNodesStore = defineStore('nodes', () => {
       }
     }
 
+    if (replace)
+      hasFullNodeList.value = true
+
     // 按 weight 升序排序（weight 越小越靠前）
     sortNodesByWeight()
     refreshEarthNodes(true)
@@ -365,6 +390,7 @@ const useNodesStore = defineStore('nodes', () => {
    */
   function clearNodes(): void {
     nodes.value = []
+    hasFullNodeList.value = false
     for (const uuid of Object.keys(pingHistoryByUuid))
       delete pingHistoryByUuid[uuid]
     refreshEarthNodes(true)
@@ -376,9 +402,13 @@ const useNodesStore = defineStore('nodes', () => {
     earthNodes,
     pingHistoryByUuid,
     pingNow,
+    pingHistoryWindowMs,
+    pingHistoryBarCount,
     pingSampleIntervalMs,
     pageLoading,
     pageError,
+    resyncVersion,
+    hasFullNodeList,
     // 计算属性
     groups,
     nodesByUuid,
@@ -389,6 +419,7 @@ const useNodesStore = defineStore('nodes', () => {
     refreshOnlineState,
     recordPingSample,
     configurePingHistory,
+    notifyResync,
     sortNodesByWeight,
     removeNode,
     clearNodes,

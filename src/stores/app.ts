@@ -3,6 +3,7 @@ import type { ByteDecimalsConfig } from '@/utils/helper'
 import { useDebounceFn, useEventListener, usePreferredDark, useStorage } from '@vueuse/core'
 import { defineStore } from 'pinia'
 import { computed, nextTick, ref, watch } from 'vue'
+import { useNodesStore } from '@/stores/nodes'
 import { resolvePingLines, saveNodePingLines, switchPingLine } from '@/utils/api'
 
 export type { ThemeMode }
@@ -255,8 +256,12 @@ const useAppStore = defineStore('app', () => {
     savingPingLines.value.add(slot)
     // Merge each queued edit into the latest selection without blocking other rows.
     const save = pendingPingSave.then(async () => {
+      const nodesStore = useNodesStore()
+      const activeUuids = nodesStore.hasFullNodeList && !nodesStore.pageLoading && !nodesStore.pageError
+        ? nodesStore.nodes.map(node => node.uuid)
+        : undefined
       const current = resolvePingLines(available, publicSettings.value!.themeSettings.pingLinesByNode[uuid])
-      const saved = await saveNodePingLines(uuid, switchPingLine(current, index, key))
+      const saved = await saveNodePingLines(uuid, switchPingLine(current, index, key), activeUuids)
       publicSettings.value!.themeSettings.pingLinesByNode = saved
     })
     pendingPingSave = save.catch(() => {})

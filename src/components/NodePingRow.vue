@@ -5,15 +5,16 @@ import { DropdownMenuContent, DropdownMenuItem, DropdownMenuPortal, DropdownMenu
 import { computed, onBeforeUnmount, ref, useTemplateRef, watch } from 'vue'
 import { DataTooltip } from '@/components/ui/data-tooltip'
 import { useNodePingDisplay } from '@/composables/useNodePingDisplay'
-import { NODE_PING_BAR_COUNT } from '@/composables/useNodePingStats'
 import { observeElementWidth, useSharedDevicePixelRatio } from '@/composables/useSharedBrowserState'
 import { useAppStore } from '@/stores/app'
+import { useNodesStore } from '@/stores/nodes'
 import { message } from '@/utils/message'
 
 const props = defineProps<{ node: NodeData, lineKey: string, index: number, lines: string[] }>()
 const emit = defineEmits<{ pingClick: [] }>()
 
 const appStore = useAppStore()
+const nodesStore = useNodesStore()
 const name = computed(() => props.node.ping?.[props.lineKey]?.name ?? props.lineKey)
 const { latencyDisplay, lossDisplay, latencyPanelTooltip, lossPanelTooltip, latencyRenderBars, lossRenderBars } = useNodePingDisplay(() => props.node.uuid, () => props.lineKey)
 const panels = computed(() => [
@@ -32,7 +33,9 @@ watch(
     stopWidthObserve = null
     if (!el)
       return
-    panelWidth.value = el.getBoundingClientRect().width
+    panelWidth.value = el instanceof HTMLElement
+      ? el.clientWidth
+      : el.getBoundingClientRect().width
     stopWidthObserve = observeElementWidth(el, (width) => {
       panelWidth.value = width
     })
@@ -48,7 +51,7 @@ onBeforeUnmount(() => {
 const { pixelRatio } = useSharedDevicePixelRatio()
 const barLayout = computed(() => {
   const ratio = pixelRatio.value
-  const count = NODE_PING_BAR_COUNT
+  const count = nodesStore.pingHistoryBarCount
   const width = Math.floor(panelWidth.value * ratio)
   // Before the first measure, fall back to a percentage layout so bars stay visible.
   if (width <= 0) {
@@ -57,11 +60,16 @@ const barLayout = computed(() => {
       lefts: Array.from({ length: count }, (_, index) => `${(index * 100) / count}%`),
     }
   }
-  const idealBarWidth = Math.round((width - (count - 1) * ratio) / count)
-  const maxBarWidth = Math.floor((width - (count - 1)) / count)
-  // At tiny scales, reduce gaps before sacrificing the last pixel of each bar.
-  const barWidth = Math.max(1, Math.min(idealBarWidth, maxBarWidth))
-  const step = (width - barWidth) / (count - 1)
+  const minGap = Math.max(1, Math.ceil(ratio))
+  const idealBarWidth = Math.floor((width - (count - 1) * minGap) / count)
+  const fallbackBarWidth = Math.floor((width - (count - 1)) / count)
+  // Keep at least 1 CSS pixel between bars when room allows; at tiny scales fall back to 1 device pixel.
+  const barWidth = Math.max(1, idealBarWidth >= 2
+    ? idealBarWidth
+    : fallbackBarWidth)
+  const step = count > 1
+    ? (width - barWidth) / (count - 1)
+    : 0
 
   // Keep bars and their relative positions on device pixels; put rounding differences in gaps.
   return {
@@ -69,6 +77,21 @@ const barLayout = computed(() => {
     lefts: Array.from({ length: count }, (_, index) => `${Math.round(index * step) / ratio}px`),
   }
 })
+
+function updateHoveredBar(panelName: string, count: number, event: PointerEvent) {
+  if (event.pointerType !== 'mouse' || count <= 0)
+    return
+  const target = event.currentTarget as HTMLElement | null
+  if (!target)
+    return
+  const rect = target.getBoundingClientRect()
+  if (rect.width <= 0)
+    return
+  const progress = Math.min(0.999999, Math.max(0, (event.clientX - rect.left) / rect.width))
+  const index = Math.floor(progress * count)
+  if (hoveredBar.value?.panel !== panelName || hoveredBar.value.index !== index)
+    hoveredBar.value = { panel: panelName, index }
+}
 
 function getPanelTooltip(panelName: string, bars: typeof latencyRenderBars.value): string | undefined {
   const index = hoveredBar.value?.panel === panelName
@@ -121,11 +144,11 @@ async function selectLine(key: string) {
         </DropdownMenuPortal>
       </DropdownMenuRoot>
       <span v-else class="truncate">{{ name }}</span>
-      <DataTooltip as="button" type="button" placement="cursor" class="shrink-0 rounded font-medium text-foreground/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" :content="latencyPanelTooltip" :aria-label="`${name} 延迟 ${latencyDisplay}`" @click="emit('pingClick')">
+      <DataTooltip as="button" type="button" placement="cursor" class="shrink-0 rounded font-medium tabular-nums text-foreground/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" :content="latencyPanelTooltip" :aria-label="`${name} 延迟 ${latencyDisplay}`" @click="emit('pingClick')">
         {{ latencyDisplay }}
       </DataTooltip>
     </div>
-    <DataTooltip as="button" type="button" placement="cursor" class="rounded text-right font-medium text-foreground/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" :content="lossPanelTooltip" :aria-label="`${name} 丢包 ${lossDisplay}`" @click="emit('pingClick')">
+    <DataTooltip as="button" type="button" placement="cursor" class="rounded text-right font-medium tabular-nums text-foreground/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" :content="lossPanelTooltip" :aria-label="`${name} 丢包 ${lossDisplay}`" @click="emit('pingClick')">
       {{ lossDisplay }}
     </DataTooltip>
     <DataTooltip
@@ -134,13 +157,15 @@ async function selectLine(key: string) {
       content-class="whitespace-nowrap w-max px-1.5 !leading-[1.2] text-[11px]"
       class="block h-2 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       :style="barLayout.vars" :aria-label="`${name} ${panel.name}历史，查看图表`" @click="emit('pingClick')"
+      @pointerenter="updateHoveredBar(panel.name, panel.bars.length, $event)"
+      @pointermove="updateHoveredBar(panel.name, panel.bars.length, $event)"
       @pointerleave="hoveredBar?.panel === panel.name && (hoveredBar = null)"
     >
       <span
         v-for="(bar, barIndex) in panel.bars" :key="bar.key"
-        class="absolute top-1/2 h-(--bar-h) w-(--bar-w) -translate-y-1/2 rounded-[1px] transition-transform duration-150 hover:scale-y-200" :class="bar.className"
+        class="pointer-events-none absolute top-1/2 h-(--bar-h) w-(--bar-w) -translate-y-1/2 rounded-[1px] transition-transform duration-150"
+        :class="[bar.className, hoveredBar?.panel === panel.name && hoveredBar.index === barIndex && 'scale-y-200']"
         :style="{ left: barLayout.lefts[barIndex] }"
-        @pointerenter="hoveredBar = { panel: panel.name, index: barIndex }"
       />
     </DataTooltip>
   </div>

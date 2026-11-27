@@ -48,6 +48,7 @@ export interface PingSample {
 export interface PingLinePoint {
   latency: number | null
   loss: number | null
+  timedOut?: boolean
 }
 
 /** 同一时间点的各线路采样。 */

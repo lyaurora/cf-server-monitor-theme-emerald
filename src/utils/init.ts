@@ -13,18 +13,30 @@ import {
   fetchAllServers,
   fetchServer,
   fetchSiteConfig,
+  getCachedSiteConfig,
   getPublicSettings,
   invalidateHistoryRequests,
   isEnabledValue,
   mergeServerPingSample,
   refreshTurnstileSession,
+  setUnauthorizedHandler,
   timestamp,
 } from '@/utils/api'
 
 const CONNECTION_NOTICE_DELAY_MS = 30_000
 const SOCKET_STABLE_CONFIRM_MS = 5_000
 const BACKGROUND_RESYNC_THRESHOLD_MS = 60_000
+const BACKGROUND_DISCONNECT_DELAY_MS = 120_000
 const SOCKET_IDLE_RESYNC_MS = 120_000
+const MAX_WS_TIMEOUT_MINUTES = 1440
+const MAX_RECONNECT_ATTEMPTS = 6
+
+function parseWsTimeoutMinutes(value: unknown): number {
+  const minutes = Number(value)
+  if (!Number.isFinite(minutes) || minutes <= 0)
+    return 0
+  return Math.min(MAX_WS_TIMEOUT_MINUTES, Math.round(minutes))
+}
 
 interface WsMessage {
   type: string
@@ -129,17 +141,26 @@ class InitManager {
   private socket: WebSocket | null = null
   private reconnectTimer: ReturnType<typeof setTimeout> | undefined
   private socketStableTimer: ReturnType<typeof setTimeout> | undefined
+  private wsTimeoutTimer: ReturnType<typeof setTimeout> | undefined
+  private backgroundDisconnectTimer: ReturnType<typeof setTimeout> | undefined
   private reconnectAttempts = 0
   private liveUpdateTimer: ReturnType<typeof setInterval> | null = null
   private pendingStatuses = new Map<string, NodeStatus>()
   private stopRouteWatch: WatchStopHandle | null = null
   private revision = 0
   private destroyed = false
-  private connectionIssue: 'retrying' | 'failed' | null = null
+  private connectionIssue: 'retrying' | 'failed' | 'timeout' | null = null
+  private connectionDetail: string | undefined
   private connectionFailedAt: number | null = null
   private connectionNoticeId: string | number | undefined
+  private connectionNoticeDismissed = false
+  private suppressingNoticeDismiss = false
   private lastSocketActivityAt = 0
   private hiddenAt: number | null = null
+  private frontendWsTimeoutMinutes = 0
+  private wsTimedOut = false
+  private pausedForBackground = false
+  private terminalFailure = false
 
   private get activeUuid(): string | null {
     const route = router.currentRoute.value
@@ -149,12 +170,23 @@ class InitManager {
   }
 
   async init(): Promise<void> {
+    setUnauthorizedHandler(this.handleUnauthorized)
+    if (document.hidden)
+      this.hiddenAt = performance.now()
     document.addEventListener('visibilitychange', this.handleVisibilityChange)
     window.addEventListener('online', this.handleOnline)
+    let redirecting = false
     try {
       let config = await fetchSiteConfig()
       if (this.destroyed)
         return
+      if (config.site_title)
+        document.title = config.site_title
+      if (!isEnabledValue(config.is_public) && !config.authorization) {
+        redirecting = true
+        window.location.href = buildAdminUrl()
+        return
+      }
       if (isEnabledValue(config.turnstile_enabled) && !config.verified) {
         if (!config.turnstile_site_key)
           throw new Error('源站已启用 Turnstile，但未返回 Site Key')
@@ -162,7 +194,7 @@ class InitManager {
           throw new Error('Turnstile 验证失败')
         if (this.destroyed)
           return
-        config = await fetchSiteConfig()
+        config = getCachedSiteConfig() ?? await fetchSiteConfig()
       }
       if (this.destroyed)
         return
@@ -170,6 +202,7 @@ class InitManager {
       if (config.site_title)
         document.title = config.site_title
       if (!isEnabledValue(config.is_public) && !config.authorization) {
+        redirecting = true
         window.location.href = buildAdminUrl()
         return
       }
@@ -179,6 +212,7 @@ class InitManager {
         return
       this.appStore.publicSettings = publicSettings
       this.appStore.updateLoginState(config.authorization)
+      this.frontendWsTimeoutMinutes = parseWsTimeoutMinutes(config.frontend_ws_timeout_minutes)
       this.nodesStore.configurePingHistory({
         points: config.latency_window?.points,
         hours: config.latency_window?.hours,
@@ -202,27 +236,45 @@ class InitManager {
       if (this.destroyed)
         return
       // Failures before page setup have no automatic retry path.
-      if (!this.stopRouteWatch)
+      if (!this.stopRouteWatch) {
+        this.terminalFailure = true
         this.reportConnectionIssue('failed')
+      }
       throw error
     }
     finally {
-      if (!this.destroyed)
+      if (!this.destroyed && !redirecting)
         this.appStore.loading = false
     }
   }
 
   private reloadPage = (): void => {
-    this.clearConnectionNotice()
+    this.terminalFailure = false
+    if (this.connectionIssue !== 'timeout')
+      this.clearConnectionNotice()
     void this.refreshPage().catch(error => console.error('[Live] Refresh failed:', error))
   }
 
-  async refreshPage(reconnectAttempt = 0): Promise<void> {
+  private syncLongHistoryPoints(points: unknown): void {
+    const num = Number(points)
+    if (!Number.isFinite(num) || num <= 0 || !this.appStore.publicSettings)
+      return
+    const normalized = Math.round(num)
+    if (this.appStore.publicSettings.long_history_points !== normalized) {
+      this.appStore.publicSettings = {
+        ...this.appStore.publicSettings,
+        long_history_points: normalized,
+      }
+    }
+  }
+
+  async refreshPage(reconnectAttempt = 0, isResync = false): Promise<void> {
     const revision = ++this.revision
     this.closeSocket()
     if (this.destroyed)
       return
     const uuid = this.activeUuid
+    this.terminalFailure = false
     this.nodesStore.pageLoading = true
     this.nodesStore.pageError = null
     try {
@@ -230,9 +282,13 @@ class InitManager {
         const server = await fetchServer(uuid)
         if (revision !== this.revision || this.destroyed)
           return
+        this.syncLongHistoryPoints(server.sysConfig?.long_history_points)
         const { client, status } = adaptServer(server)
-        invalidateHistoryRequests()
+        if (isResync)
+          invalidateHistoryRequests()
         this.nodesStore.initNodes({ [client.uuid]: client }, { [client.uuid]: status }, false)
+        if (isResync)
+          this.nodesStore.notifyResync()
         this.applyBatch({ type: 'batchUpdate', updates: server.latestReportUpdates }, uuid)
         this.flushPendingStatuses()
       }
@@ -240,39 +296,72 @@ class InitManager {
         const { clients, statuses, latestReportUpdates, sysConfig } = await fetchAllServers()
         if (revision !== this.revision || this.destroyed)
           return
+        this.syncLongHistoryPoints(sysConfig?.long_history_points)
         this.nodesStore.configurePingHistory({
           showThreeNetDetails: sysConfig?.show_three_net_details === undefined || isEnabledValue(sysConfig.show_three_net_details),
         })
-        invalidateHistoryRequests()
+        if (isResync)
+          invalidateHistoryRequests()
         this.nodesStore.initNodes(clients, statuses)
+        if (isResync)
+          this.nodesStore.notifyResync()
         this.applyBatch({ type: 'batchUpdate', updates: latestReportUpdates })
         this.flushPendingStatuses()
       }
       this.nodesStore.refreshOnlineState()
       this.reconnectAttempts = reconnectAttempt
-      this.connectSocket(uuid, revision)
+      if (this.wsTimedOut) {
+        if (this.connectionIssue !== 'timeout')
+          this.reportConnectionIssue('timeout')
+      }
+      else if (!this.pausedForBackground) {
+        if (document.hidden && this.hiddenAt !== null && performance.now() - this.hiddenAt >= BACKGROUND_DISCONNECT_DELAY_MS) {
+          this.pausedForBackground = true
+        }
+        else {
+          this.connectSocket(uuid, revision)
+          if (document.hidden)
+            this.scheduleBackgroundDisconnect()
+        }
+      }
     }
     catch (error) {
       if (revision !== this.revision || this.destroyed)
         return
-      if (error instanceof ApiError && [401, 403, 404].includes(error.code ?? 0)) {
-        if (error.code === 404 && uuid) {
+      if (error instanceof ApiError && [400, 401, 403, 404, 409].includes(error.code ?? 0)) {
+        this.terminalFailure = true
+        this.clearBackgroundDisconnectTimer()
+        if ((error.code === 404 || error.code === 400) && uuid) {
           this.nodesStore.removeNode(uuid)
           this.nodesStore.pageError = 'not-found'
         }
         else {
           this.nodesStore.clearNodes()
-          this.nodesStore.pageError = error.code === 404
+          this.nodesStore.pageError = error.code === 404 || error.code === 400
             ? 'not-found'
-            : 'forbidden'
+            : error.code === 409
+              ? 'upgrade'
+              : 'forbidden'
         }
-        this.clearConnectionNotice()
-        // Missing nodes already have an empty state; access failures need an action.
-        if (error.code !== 404)
-          this.reportConnectionIssue('failed')
+        // Missing nodes already have an empty state; access/upgrade failures need an action.
+        if (error.code === 404) {
+          if (this.connectionIssue !== 'timeout')
+            this.clearConnectionNotice()
+        }
+        else {
+          this.clearConnectionNotice()
+          this.reportConnectionIssue(
+            'failed',
+            error.code === 409
+              ? error.message
+              : undefined,
+          )
+        }
       }
       else {
         this.nodesStore.pageError = 'network'
+        if (document.hidden)
+          this.scheduleBackgroundDisconnect()
         this.scheduleReconnect(revision, reconnectAttempt + 1)
       }
       throw error
@@ -302,6 +391,10 @@ class InitManager {
 
     if (currentNode && client.boot_time)
       currentNode.boot_time = client.boot_time
+    if (currentNode && client.gpu_name) {
+      currentNode.gpu_info = client.gpu_info
+      currentNode.gpu_name = client.gpu_name
+    }
 
     if (current) {
       for (const [field, keys] of LIVE_STATUS_FIELDS) {
@@ -398,8 +491,9 @@ class InitManager {
         scope: serverId ?? 'all',
         ids: serverId
           ? [serverId]
-          : this.nodesStore.nodes.map(node => node.uuid),
+          : this.nodesStore.nodes.map(node => node.uuid).slice(0, 500),
       }))
+      this.scheduleWsTimeout(revision, socket)
     })
     socket.addEventListener('message', (event) => {
       if (!isCurrent())
@@ -419,62 +513,160 @@ class InitManager {
         this.applyBatch(message, serverId)
       }
     })
-    socket.addEventListener('close', () => {
+    socket.addEventListener('close', (event) => {
       if (!isCurrent())
         return
       clearTimeout(this.socketStableTimer)
       this.socketStableTimer = undefined
+      clearTimeout(this.wsTimeoutTimer)
+      this.wsTimeoutTimer = undefined
       this.socket = null
+      if (event.code === 1008) {
+        this.terminalFailure = true
+        this.clearBackgroundDisconnectTimer()
+        this.reportConnectionIssue('failed')
+        return
+      }
       this.scheduleReconnect(revision, this.reconnectAttempts + 1)
     })
     socket.addEventListener('error', () => socket.close())
   }
 
   private scheduleReconnect(revision: number, attempts: number): void {
-    if (this.destroyed || revision !== this.revision)
+    if (this.destroyed || revision !== this.revision || this.pausedForBackground || this.terminalFailure)
       return
+    if (attempts > MAX_RECONNECT_ATTEMPTS) {
+      this.reportConnectionIssue('failed', '多次重连失败，已停止自动重试，请检查网络后刷新页面。')
+      return
+    }
     this.reportConnectionIssue('retrying')
     this.reconnectAttempts = attempts
     const delay = Math.min(30_000, 1000 * 2 ** Math.min(attempts, 5))
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = undefined
       if (!this.destroyed && revision === this.revision)
-        void this.refreshPage(attempts).catch(error => console.error('[Live] Reconnect failed:', error))
+        void this.refreshPage(attempts, true).catch(error => console.error('[Live] Reconnect failed:', error))
     }, delay)
   }
 
-  private reportConnectionIssue(issue: 'retrying' | 'failed'): void {
-    if (this.connectionIssue !== issue)
+  private scheduleWsTimeout(revision: number, socket: WebSocket): void {
+    clearTimeout(this.wsTimeoutTimer)
+    this.wsTimeoutTimer = undefined
+    if (this.frontendWsTimeoutMinutes <= 0)
+      return
+    this.wsTimeoutTimer = setTimeout(() => {
+      this.wsTimeoutTimer = undefined
+      if (this.destroyed || revision !== this.revision || this.socket !== socket)
+        return
+      this.wsTimedOut = true
+      this.pausedForBackground = false
+      this.clearBackgroundDisconnectTimer()
+      this.closeSocket()
+      this.reportConnectionIssue('timeout')
+    }, this.frontendWsTimeoutMinutes * 60_000)
+  }
+
+  private resumeFromWsTimeout(): void {
+    if (this.destroyed)
+      return
+    this.wsTimedOut = false
+    this.pausedForBackground = false
+    this.terminalFailure = false
+    this.clearConnectionNotice()
+    void this.refreshPage(0, true).catch(error => console.error('[Live] Timeout resume failed:', error))
+  }
+
+  private clearBackgroundDisconnectTimer(): void {
+    clearTimeout(this.backgroundDisconnectTimer)
+    this.backgroundDisconnectTimer = undefined
+  }
+
+  private scheduleBackgroundDisconnect(): void {
+    if (this.destroyed || this.wsTimedOut || this.terminalFailure || !this.stopRouteWatch || this.backgroundDisconnectTimer !== undefined)
+      return
+    const hiddenSince = this.hiddenAt ?? performance.now()
+    this.hiddenAt = hiddenSince
+    const remaining = Math.max(0, BACKGROUND_DISCONNECT_DELAY_MS - (performance.now() - hiddenSince))
+    this.backgroundDisconnectTimer = setTimeout(() => {
+      this.backgroundDisconnectTimer = undefined
+      if (this.destroyed || !document.hidden || this.wsTimedOut || this.terminalFailure)
+        return
+      // Invalidate any in-flight refresh so its rejection cannot restart background polling.
+      this.revision++
+      this.pausedForBackground = true
+      this.nodesStore.pageLoading = false
+      this.closeSocket()
+    }, remaining)
+  }
+
+  private dismissToastSilently(): void {
+    if (this.connectionNoticeId === undefined)
+      return
+    const id = this.connectionNoticeId
+    this.connectionNoticeId = undefined
+    this.suppressingNoticeDismiss = true
+    try {
+      toast.dismiss(id)
+    }
+    finally {
+      this.suppressingNoticeDismiss = false
+    }
+  }
+
+  private reportConnectionIssue(issue: 'retrying' | 'failed' | 'timeout', detail?: string): void {
+    if (this.connectionIssue !== issue || this.connectionDetail !== detail)
       this.clearConnectionNotice()
     this.connectionIssue = issue
+    this.connectionDetail = detail
     this.connectionFailedAt ??= performance.now()
-    // Keep the ID after manual dismissal: one notice per uninterrupted failure.
-    if (document.hidden || this.connectionNoticeId !== undefined)
+    // Respect manual dismissal: one notice per uninterrupted failure/timeout.
+    if (document.hidden || this.connectionNoticeId !== undefined || this.connectionNoticeDismissed)
       return
     const retrying = issue === 'retrying'
+    const timedOut = issue === 'timeout'
     // Require a failed retry after the grace period, not just elapsed time.
     if (retrying && performance.now() - this.connectionFailedAt < CONNECTION_NOTICE_DELAY_MS)
       return
-    this.connectionNoticeId = toast.warning(retrying ? '实时连接暂时中断' : '暂时无法加载数据', {
-      description: retrying
-        ? '正在重连，数据可能延迟。'
-        : '请检查网络或权限后重试。',
-      class: 'connection-notice',
-      richColors: false,
-      duration: Number.POSITIVE_INFINITY,
-      action: {
-        label: '刷新页面',
-        onClick: () => window.location.reload(),
+    this.connectionNoticeId = toast.warning(
+      timedOut
+        ? '实时连接已超时'
+        : retrying
+          ? '实时连接暂时中断'
+          : '暂时无法加载数据',
+      {
+        description: detail || (timedOut
+          ? '已暂停实时更新，点击继续连接可重新订阅。'
+          : retrying
+            ? '正在重连，数据可能延迟。'
+            : '请检查网络或权限后重试。'),
+        class: 'connection-notice',
+        richColors: false,
+        duration: Number.POSITIVE_INFINITY,
+        onDismiss: () => {
+          if (!this.suppressingNoticeDismiss) {
+            this.connectionNoticeId = undefined
+            this.connectionNoticeDismissed = true
+          }
+        },
+        action: timedOut
+          ? {
+              label: '继续连接',
+              onClick: () => this.resumeFromWsTimeout(),
+            }
+          : {
+              label: '刷新页面',
+              onClick: () => window.location.reload(),
+            },
       },
-    })
+    )
   }
 
   private clearConnectionNotice(): void {
     this.connectionFailedAt = null
-    if (this.connectionNoticeId !== undefined)
-      toast.dismiss(this.connectionNoticeId)
-    this.connectionNoticeId = undefined
+    this.dismissToastSilently()
     this.connectionIssue = null
+    this.connectionDetail = undefined
+    this.connectionNoticeDismissed = false
   }
 
   private handleVisibilityChange = (): void => {
@@ -482,22 +674,44 @@ class InitManager {
     this.connectionFailedAt = null
     if (document.hidden) {
       this.hiddenAt = performance.now()
-      if (this.connectionNoticeId !== undefined)
-        toast.dismiss(this.connectionNoticeId)
-      this.connectionNoticeId = undefined
+      this.dismissToastSilently()
+      this.scheduleBackgroundDisconnect()
       return
     }
 
+    this.clearBackgroundDisconnectTimer()
     const hiddenDuration = this.hiddenAt !== null
       ? performance.now() - this.hiddenAt
       : 0
     this.hiddenAt = null
 
-    // If a backoff timer is waiting, reconnect right away instead of sitting idle up to 30s.
+    // If a backoff timer is waiting (including a failed route fetch while wsTimedOut), retry right away.
     if (this.reconnectTimer !== undefined) {
       clearTimeout(this.reconnectTimer)
       this.reconnectTimer = undefined
-      void this.refreshPage(0).catch(error => console.error('[Live] Foreground reconnect failed:', error))
+      void this.refreshPage(0, true).catch(error => console.error('[Live] Foreground reconnect failed:', error))
+      return
+    }
+
+    // Never silently reconnect after the backend-configured WS timeout paused the session.
+    if (this.wsTimedOut) {
+      if (this.connectionIssue === 'failed')
+        this.reportConnectionIssue('failed', this.connectionDetail)
+      else
+        this.reportConnectionIssue('timeout')
+      return
+    }
+
+    // Do not auto-retry terminal errors (400/401/403/404/409/1008) on tab switch.
+    if (this.terminalFailure) {
+      if (this.connectionIssue)
+        this.reportConnectionIssue(this.connectionIssue, this.connectionDetail)
+      return
+    }
+
+    if (this.pausedForBackground) {
+      this.pausedForBackground = false
+      void this.refreshPage(0, true).catch(error => console.error('[Live] Foreground resume failed:', error))
       return
     }
 
@@ -507,22 +721,39 @@ class InitManager {
       && hiddenDuration >= BACKGROUND_RESYNC_THRESHOLD_MS
       && (this.socket?.readyState !== WebSocket.OPEN || performance.now() - this.lastSocketActivityAt >= SOCKET_IDLE_RESYNC_MS)
     ) {
-      void this.refreshPage(0).catch(error => console.error('[Live] Foreground resync failed:', error))
+      void this.refreshPage(0, true).catch(error => console.error('[Live] Foreground resync failed:', error))
       return
     }
 
     if (this.connectionIssue) {
-      this.reportConnectionIssue(this.connectionIssue)
+      this.reportConnectionIssue(this.connectionIssue, this.connectionDetail)
+    }
+  }
+
+  private handleUnauthorized = (): void => {
+    this.appStore.updateLoginState(false)
+    if (this.appStore.publicSettings) {
+      this.appStore.publicSettings = {
+        ...this.appStore.publicSettings,
+        record_preserve_time: 24,
+        ping_record_preserve_time: 24,
+      }
+    }
+    const config = getCachedSiteConfig()
+    if (config && !isEnabledValue(config.is_public)) {
+      this.terminalFailure = true
+      this.closeSocket()
+      window.location.href = buildAdminUrl()
     }
   }
 
   private handleOnline = (): void => {
-    if (this.destroyed || !this.stopRouteWatch)
+    if (this.destroyed || !this.stopRouteWatch || this.wsTimedOut || this.pausedForBackground || this.terminalFailure || document.hidden)
       return
     if (this.reconnectTimer !== undefined || this.socket?.readyState !== WebSocket.OPEN) {
       clearTimeout(this.reconnectTimer)
       this.reconnectTimer = undefined
-      void this.refreshPage(0).catch(error => console.error('[Live] Online reconnect failed:', error))
+      void this.refreshPage(0, true).catch(error => console.error('[Live] Online reconnect failed:', error))
     }
   }
 
@@ -532,6 +763,8 @@ class InitManager {
     socket?.close()
     clearTimeout(this.socketStableTimer)
     this.socketStableTimer = undefined
+    clearTimeout(this.wsTimeoutTimer)
+    this.wsTimeoutTimer = undefined
     clearTimeout(this.reconnectTimer)
     this.reconnectTimer = undefined
     this.reconnectAttempts = 0
@@ -541,8 +774,10 @@ class InitManager {
   destroy(): void {
     this.destroyed = true
     this.revision++
+    setUnauthorizedHandler(null)
     document.removeEventListener('visibilitychange', this.handleVisibilityChange)
     window.removeEventListener('online', this.handleOnline)
+    this.clearBackgroundDisconnectTimer()
     this.clearConnectionNotice()
     this.stopRouteWatch?.()
     this.closeSocket()

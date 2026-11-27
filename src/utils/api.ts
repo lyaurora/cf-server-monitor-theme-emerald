@@ -95,6 +95,9 @@ export interface SiteConfig {
   turnstile_login_enabled?: boolean | string
   turnstile_site_key?: string
   site_title?: string
+  preferred_theme?: string
+  frontend_ws_timeout_minutes?: number | string
+  long_history_points?: number
   verified?: boolean
   turnstile_verified?: string | null
   theme_options?: unknown
@@ -262,6 +265,7 @@ export interface ThemeSettings {
 export interface PublicSettings {
   ping_record_preserve_time: number
   record_preserve_time: number
+  long_history_points: number
   sitename: string
   themeSettings: ThemeSettings
 }
@@ -292,6 +296,15 @@ export class ApiError extends Error {
 
 let cachedSysConfig: SysConfig | undefined
 let cachedSiteConfig: SiteConfig | undefined
+let unauthorizedHandler: (() => void) | null = null
+
+export function getCachedSiteConfig(): SiteConfig | undefined {
+  return cachedSiteConfig
+}
+
+export function setUnauthorizedHandler(handler: (() => void) | null): void {
+  unauthorizedHandler = handler
+}
 
 type PingProviderKey = 'ct' | 'cu' | 'cm' | 'bd'
 type PingNodeKey = 'node_1' | 'node_2' | 'node_3' | 'node_4'
@@ -438,6 +451,32 @@ function themeString(value: unknown, fallback: string): string {
     : fallback
 }
 
+const EXPLICIT_HTTP_URL_REGEX = /^https?:\/\//i
+
+function hasUnsafeUrlChar(value: string): boolean {
+  for (let i = 0; i < value.length; i++) {
+    const code = value.charCodeAt(i)
+    if (code <= 0x1F || code === 0x7F || code === 0x5C)
+      return true
+  }
+  return false
+}
+
+function themeHttpUrl(value: unknown, fallback: string): string {
+  const text = themeString(value, fallback)
+  if (!text || hasUnsafeUrlChar(text) || !EXPLICIT_HTTP_URL_REGEX.test(text))
+    return fallback
+  try {
+    const url = new URL(text)
+    return url.protocol === 'http:' || url.protocol === 'https:'
+      ? url.href
+      : fallback
+  }
+  catch {
+    return fallback
+  }
+}
+
 function themeNumber(value: unknown, fallback: number, min: number, max: number): number {
   const number = Number(value)
   return Number.isFinite(number) && number >= min && number <= max
@@ -452,12 +491,12 @@ function themeEnum<T extends string>(value: unknown, fallback: T, values: readon
 }
 
 /** Converts the CF Server Monitor `theme_options` wire format to UI-safe values. */
-export function adaptThemeOptions(value: unknown): ThemeSettings {
+export function adaptThemeOptions(value: unknown, fallbackThemeMode?: ThemeMode): ThemeSettings {
   const options = themeOptionValues(value)
   return {
     pingLinesByNode: normalizePingLinesByNode(options.pingLinesByNode),
     defaultViewMode: themeEnum(options.defaultViewMode, DEFAULT_THEME_SETTINGS.defaultViewMode, ['card', 'list']),
-    defaultThemeMode: themeEnum(options.defaultThemeMode, DEFAULT_THEME_SETTINGS.defaultThemeMode, ['auto', 'light', 'dark']),
+    defaultThemeMode: themeEnum(options.defaultThemeMode, fallbackThemeMode ?? DEFAULT_THEME_SETTINGS.defaultThemeMode, ['auto', 'light', 'dark']),
     alertEnabled: themeBoolean(options.alertEnabled, DEFAULT_THEME_SETTINGS.alertEnabled),
     alertTitle: themeString(options.alertTitle, DEFAULT_THEME_SETTINGS.alertTitle),
     alertContent: themeString(options.alertContent, DEFAULT_THEME_SETTINGS.alertContent),
@@ -474,10 +513,10 @@ export function adaptThemeOptions(value: unknown): ThemeSettings {
     offlineNodesLast: themeBoolean(options.offlineNodesLast, DEFAULT_THEME_SETTINGS.offlineNodesLast),
     icpEnabled: themeBoolean(options.icpEnabled, DEFAULT_THEME_SETTINGS.icpEnabled),
     icpNumber: themeString(options.icpNumber, DEFAULT_THEME_SETTINGS.icpNumber),
-    icpUrl: themeString(options.icpUrl, DEFAULT_THEME_SETTINGS.icpUrl),
+    icpUrl: themeHttpUrl(options.icpUrl, DEFAULT_THEME_SETTINGS.icpUrl),
     policeEnabled: themeBoolean(options.policeEnabled, DEFAULT_THEME_SETTINGS.policeEnabled),
     policeNumber: themeString(options.policeNumber, DEFAULT_THEME_SETTINGS.policeNumber),
-    policeUrl: themeString(options.policeUrl, DEFAULT_THEME_SETTINGS.policeUrl),
+    policeUrl: themeHttpUrl(options.policeUrl, DEFAULT_THEME_SETTINGS.policeUrl),
     backgroundEnabled: themeBoolean(options.backgroundEnabled, DEFAULT_THEME_SETTINGS.backgroundEnabled),
     backgroundType: themeEnum(options.backgroundType, DEFAULT_THEME_SETTINGS.backgroundType, ['image', 'video']),
     lightBackgroundUrl: themeString(options.lightBackgroundUrl, DEFAULT_THEME_SETTINGS.lightBackgroundUrl),
@@ -515,7 +554,10 @@ function getGpuName(raw: unknown): string {
   const list = parseGpuInfo(raw)
   if (list.length > 0)
     return list.map(g => g.name || g.id || 'GPU').join(' / ')
-  return String(raw ?? '')
+  const text = String(raw ?? '').trim()
+  if (!text || text.startsWith('[') || text.startsWith('{'))
+    return ''
+  return text
 }
 
 function normalizeGpuInfo(raw: unknown): string {
@@ -578,17 +620,19 @@ function authHeaders(initialHeaders?: HeadersInit): Headers {
   if (token)
     headers.set('Authorization', `Bearer ${token}`)
 
-  const host = typeof window === 'undefined'
-    ? ''
-    : window.location.hostname
-  const turnstileToken = getLocalStorageValue('turnstile_token')
-  const verified = (host
-    ? getLocalStorageValue(`turnstile_verified_${host}`)
-    : '') || getLocalStorageValue('turnstile_verified')
-  if (turnstileToken)
-    headers.set('X-Turnstile-Token', turnstileToken)
-  else if (verified)
-    headers.set('X-Turnstile-Verified', verified)
+  if (cachedSiteConfig === undefined || enabled(cachedSiteConfig.turnstile_enabled)) {
+    const host = typeof window === 'undefined'
+      ? ''
+      : window.location.hostname
+    const turnstileToken = getLocalStorageValue('turnstile_token')
+    const verified = (host
+      ? getLocalStorageValue(`turnstile_verified_${host}`)
+      : '') || getLocalStorageValue('turnstile_verified')
+    if (turnstileToken)
+      headers.set('X-Turnstile-Token', turnstileToken)
+    else if (verified)
+      headers.set('X-Turnstile-Verified', verified)
+  }
   return headers
 }
 
@@ -735,14 +779,38 @@ async function request<T>(
   }
 
   if (!response.ok) {
-    const message = data && typeof data === 'object' && 'error' in data
-      ? String((data as { error: unknown }).error)
-      : `HTTP ${response.status}`
+    const errorRecord = isRecord(data)
+      ? data
+      : null
+    const rawMessage = errorRecord && 'error' in errorRecord && errorRecord.error
+      ? String(errorRecord.error)
+      : errorRecord && 'message' in errorRecord && errorRecord.message
+        ? String(errorRecord.message)
+        : `HTTP ${response.status}`
+    const message = response.status === 409 && rawMessage === 'databaseUpgradeRequired'
+      ? '后端数据库需要升级，请登录管理后台执行数据库升级'
+      : rawMessage
+
+    if (response.status === 401) {
+      const currentToken = getLocalStorageValue('jwt_token')
+      const sentAuth = requestHeaders.get('Authorization')
+      // Avoid wiping a newer jwt_token written by another tab (e.g. /admin login) after this request started.
+      if (!currentToken || sentAuth === `Bearer ${currentToken}`) {
+        if (currentToken)
+          removeLocalStorageValue('jwt_token')
+        if (cachedSiteConfig)
+          cachedSiteConfig = { ...cachedSiteConfig, authorization: false }
+        unauthorizedHandler?.()
+      }
+    }
     if (response.status === 403 && isTurnstileManaged403(path, data)) {
       // Wait for the in-flight exchange; its token must only be consumed once.
       if (allowTurnstileRetry && turnstileRefreshPromise) {
-        if (await turnstileRefreshPromise)
+        if (await turnstileRefreshPromise) {
+          if (path === '/api/config' && cachedSiteConfig)
+            return cachedSiteConfig as T
           return request(path, options, false)
+        }
       }
       else {
         const currentHeaders = authHeaders(options.headers)
@@ -755,8 +823,11 @@ async function request<T>(
         // A late failure from an old session must not clear the new session.
         if (!credentialsChanged)
           clearTurnstileSession()
-        if (allowTurnstileRetry && (credentialsChanged || await refreshTurnstileSession()))
+        if (allowTurnstileRetry && (credentialsChanged || await refreshTurnstileSession())) {
+          if (!credentialsChanged && path === '/api/config' && cachedSiteConfig)
+            return cachedSiteConfig as T
           return request(path, options, false)
+        }
       }
     }
     throw new ApiError(message, response.status)
@@ -773,6 +844,8 @@ async function request<T>(
 export async function fetchSiteConfig(): Promise<SiteConfig> {
   const config = await request<SiteConfig>('/api/config')
   cachedSiteConfig = config
+  if (!enabled(config.turnstile_enabled))
+    clearTurnstileSession()
   applyCustomPingNames(config)
   return config
 }
@@ -780,15 +853,28 @@ export async function fetchSiteConfig(): Promise<SiteConfig> {
 // Keep acknowledged edits while other Worker instances can still return cached configuration.
 const savedPingLineEdits = new Map<string, { time: number, lines: string[] }>()
 
-export async function saveNodePingLines(uuid: string, lines: string[]): Promise<Record<string, string[]>> {
+export async function saveNodePingLines(
+  uuid: string,
+  lines: string[],
+  activeNodeUuids?: Iterable<string>,
+): Promise<Record<string, string[]>> {
   if (lines.length > 3 || lines.some(key => !Object.hasOwn(DEFAULT_PING_TASK_NAMES, key)) || new Set(lines).size !== lines.length)
     throw new Error('无效的探针线路')
+  const tokenBeforeConfig = getLocalStorageValue('jwt_token')
   const config = await request<SiteConfig>('/api/config')
-  if (!config.authorization)
+  if (!config.authorization) {
+    if (tokenBeforeConfig && getLocalStorageValue('jwt_token') === tokenBeforeConfig)
+      removeLocalStorageValue('jwt_token')
+    cachedSiteConfig = config
+    unauthorizedHandler?.()
     throw new Error('请先登录站长账号')
+  }
   const existing = isRecord(config.theme_options)
     ? config.theme_options
     : {}
+  const activeSet = activeNodeUuids
+    ? new Set(activeNodeUuids)
+    : null
   const now = Date.now()
   for (const [key, edit] of savedPingLineEdits) {
     if (now - edit.time >= 150_000)
@@ -797,11 +883,36 @@ export async function saveNodePingLines(uuid: string, lines: string[]): Promise<
   const recentEdits = Object.fromEntries(
     Array.from(savedPingLineEdits, ([key, edit]) => [key, edit.lines]),
   )
-  const pingLinesByNode = {
+  const mergedPingLines: Record<string, string[]> = {
     ...adaptThemeOptions(existing).pingLinesByNode,
     ...recentEdits,
     [uuid]: lines,
   }
+  let pruneSet: Set<string> | null = null
+  if (activeSet && activeSet.size > 0 && activeSet.has(uuid)) {
+    const hasStaleCandidate = Object.keys(mergedPingLines).some(key => !activeSet.has(key))
+    if (hasStaleCandidate) {
+      // Verify against live /api/servers before pruning so servers newly added in another tab are never dropped.
+      try {
+        const live = await request<ServersResponse>('/api/servers')
+        const verified = new Set((live.servers ?? []).map(server => server.id))
+        if (verified.size > 0 && verified.has(uuid))
+          pruneSet = verified
+      }
+      catch {
+        pruneSet = null
+      }
+    }
+  }
+  if (pruneSet) {
+    for (const key of savedPingLineEdits.keys()) {
+      if (!pruneSet.has(key))
+        savedPingLineEdits.delete(key)
+    }
+  }
+  const pingLinesByNode = pruneSet
+    ? Object.fromEntries(Object.entries(mergedPingLines).filter(([key]) => pruneSet!.has(key)))
+    : mergedPingLines
   const themeOptions = { ...existing, pingLinesByNode }
   const result = await request<{ success: boolean, message?: string }>('/api/theme_options', {
     method: 'POST',
@@ -1154,8 +1265,19 @@ export function mergeServerPingSample(server: Record<string, unknown>, previous:
     if (!hasLatency && !hasLoss)
       continue
     const current = previous?.[task.key]
-    const latency = hasLatency ? server[task.latencyField] : current?.latest
-    const loss = hasLoss ? server[task.lossField] : current?.loss
+    let latency = hasLatency
+      ? server[task.latencyField]
+      : current?.latest
+    let loss = hasLoss
+      ? server[task.lossField]
+      : current?.loss
+    // Clear opposite-side timeout latch when a partial WS update reports recovery.
+    const parsedLatency = nullableNumber(latency)
+    const parsedLoss = nullableNumber(loss)
+    if (hasLatency && !hasLoss && parsedLatency !== null && parsedLatency >= 0 && current?.loss === 100)
+      loss = undefined
+    if (!hasLatency && hasLoss && parsedLoss !== null && parsedLoss >= 0 && parsedLoss < 100 && current?.latest === -1)
+      latency = undefined
     const next = isPingFieldPresent(latency) || isPingFieldPresent(loss)
       ? pingEntry(pingTaskNames[task.key], latency, loss)
       : undefined
@@ -1197,23 +1319,30 @@ function buildPingWindowPoint(
   pingPoint: LatencyWindowPoint | undefined,
   lossPoint: LatencyWindowPoint | undefined,
 ): PingWindowPoint {
-  const lines = Object.fromEntries(PING_TASKS.map(({ key }) => {
-    const latency = nullableNumber(pingPoint?.[key])
-    const loss = nullableNumber(lossPoint?.[key])
-    return [
-      key,
-      {
-        latency: latency !== null && latency >= 0 && loss !== 100
-          ? latency
+  const lines: Record<string, { latency: number | null, loss: number | null, timedOut?: boolean }> = {}
+  for (const { key } of PING_TASKS) {
+    const rawLatency = pingPoint?.[key]
+    const rawLoss = lossPoint?.[key]
+    // false/undefined 表示该时间点未采样或未配置，不能写入空对象截断前点覆盖区间。
+    if (!isPingFieldPresent(rawLatency) && !isPingFieldPresent(rawLoss))
+      continue
+    const latency = nullableNumber(rawLatency)
+    const loss = nullableNumber(rawLoss)
+    const timedOut = rawLatency === null || (latency !== null && latency < 0) || loss === 100
+    lines[key] = {
+      latency: !timedOut && latency !== null
+        ? latency
+        : null,
+      loss: loss !== null && loss >= 0 && loss <= 100
+        ? loss
+        : latency !== null && latency < 0
+          ? 100
           : null,
-        loss: loss !== null && loss >= 0 && loss <= 100
-          ? loss
-          : latency !== null && latency < 0
-            ? 100
-            : null,
-      },
-    ]
-  }))
+      ...(timedOut
+        ? { timedOut: true }
+        : {}),
+    }
+  }
   return {
     time: new Date(ts).toISOString(),
     lines,
@@ -1265,7 +1394,7 @@ export function adaptServer(server: CfServer, sysConfig: SysConfig | undefined =
   for (const task of PING_TASKS) {
     const hasCurrentFields = Object.hasOwn(server, task.latencyField) || Object.hasOwn(server, task.lossField)
     if (pingFieldPresent(server, task.latencyField) || pingFieldPresent(server, task.lossField)
-      || (!hasCurrentFields && pingWindow?.some(point => point.lines?.[task.key]?.latency != null || point.lines?.[task.key]?.loss != null))) {
+      || (!hasCurrentFields && pingWindow?.some(point => point.lines?.[task.key]?.latency != null || point.lines?.[task.key]?.loss != null || point.lines?.[task.key]?.timedOut))) {
       ping[task.key] = pingEntry(
         pingTaskNames[task.key],
         server[task.latencyField],
@@ -1298,7 +1427,12 @@ export function adaptServer(server: CfServer, sysConfig: SysConfig | undefined =
       billing_cycle: billing.billingCycle,
       auto_renewal: billing.autoRenewal,
       currency: billing.currency,
-      expired_at: server.expire_date || server.expired_at || '9999-12-31',
+      expired_at: (() => {
+        const raw = (server.expire_date || server.expired_at || '').trim()
+        return raw && Number.isFinite(Date.parse(raw))
+          ? raw
+          : ''
+      })(),
       group: server.server_group || '默认分组',
       tags: server.tags || '',
       showPrice: sysConfig?.show_price === undefined || enabled(sysConfig.show_price),
@@ -1455,6 +1589,12 @@ export async function fetchPingHistory(uuid: string, hours = 1): Promise<{
 
 export async function fetchServer(uuid: string): Promise<CfServer> {
   const server = await request<CfServer>(`/api/server?id=${encodeURIComponent(uuid)}`)
+  if (server.sysConfig) {
+    cachedSysConfig = {
+      ...cachedSysConfig,
+      ...server.sysConfig,
+    }
+  }
   return {
     ...server,
     sysConfig: {
@@ -1472,11 +1612,17 @@ export async function getPublicSettings(): Promise<PublicSettings> {
   const config = cachedSiteConfig ?? await fetchSiteConfig()
   // 与 CFSM 历史接口一致：访客最多 24 小时，登录后最多 7 天。
   const historyHours = config.authorization ? 168 : 24
+  const preferredTheme = themeEnum(config.preferred_theme, DEFAULT_THEME_SETTINGS.defaultThemeMode, ['auto', 'light', 'dark'])
+  const rawPoints = Number(config.long_history_points ?? cachedSysConfig?.long_history_points)
+  const longHistoryPoints = Number.isFinite(rawPoints) && rawPoints > 0
+    ? Math.round(rawPoints)
+    : 120
   return {
     ping_record_preserve_time: historyHours,
     record_preserve_time: historyHours,
+    long_history_points: longHistoryPoints,
     sitename: config.site_title || document.title || 'CF Server Monitor',
-    themeSettings: adaptThemeOptions(config.theme_options),
+    themeSettings: adaptThemeOptions(config.theme_options, preferredTheme),
   }
 }
 
